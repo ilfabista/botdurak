@@ -25,7 +25,6 @@ const state = {
   selected: null,   // carta selezionata in difesa
   rects: {},        // rect pre-render
   conn: null,
-  donePairs: new Set(),  // coppie completate già animate verso la lane
 };
 
 /* larghezza reale della carta (la CSS var --card-w è un clamp()) */
@@ -122,11 +121,6 @@ function applyState(s) {
   renderAll(s);
   if (deal) { dealIn(); }
   else { animateTransitions(s); }
-  // coppie appena completate: girate e spedite a destra nella lane
-  document.querySelectorAll('#pairs .pair.done').forEach(el => {
-    if (!state.donePairs.has(el.dataset.pid)) flipPairToLane(el, el.dataset.pid);
-  });
-  laneCleanupAfterTake(s);
   state.prev = { hand: new Set(s.hand), table: new Set(tableCards(s)), opp: s.opp_count, deck: s.deck_count };
   if (state.first) { state.first = false; toast('🎴 Partita iniziata — briscola ' + SUIT_SYM[s.trump]); }
   eventToasts(s);
@@ -171,16 +165,19 @@ function animateTransitions(s) {
     if (elc && state.rects['deck-area']) flyTo(elc, state.rects['deck-area'], { delay: 120 });
   }
 
-  // carte sparite dal tavolo: scarto (angolo) o presa dell'avversario
-  if (s.opp_count > prev.opp) {
+  // carte sparite dal tavolo: fine giro (clear → si girano e scivolano nella
+  // lane a destra, il passaggio di turno visibile) o presa dell'avversario
+  // (take → volano da lui). Deciso dal last_action: dopo un clear la pescata
+  // fa crescere opp_count e l'euristica sul conteggio sbaglierebbe.
+  if (s.last_action === 'clear') {
+    for (const c of prev.table) {
+      if (tab.has(c) || s.hand.includes(c)) continue;
+      ghostFly(c, state.rects['discard-area'], s, { flip: true });
+    }
+  } else if (s.last_action === 'take' && s.opp_count > prev.opp) {
     for (const c of prev.table) {
       if (tab.has(c) || s.hand.includes(c)) continue;
       ghostFly(c, state.rects['opp-area'], s);
-    }
-  } else {
-    for (const c of prev.table) {
-      if (tab.has(c) || s.hand.includes(c)) continue;
-      ghostFly(c, state.rects['discard-area'], s);
     }
   }
 }
@@ -222,8 +219,9 @@ function flyTo(el, src, opts = {}) {
   };
 }
 
-/* carta che lascia il tavolo senza destinazione visibile: clone che svanisce */
-function ghostFly(card, target, s) {
+/* carta che lascia il tavolo senza destinazione visibile: clone che svanisce
+   (presa avversaria) o che si GIRA e scivola nella lane a destra (fine giro) */
+function ghostFly(card, target, s, opts = {}) {
   const src = state.rects['c-' + card];
   if (!src) return;
   const ghost = document.createElement('div');
@@ -236,10 +234,34 @@ function ghostFly(card, target, s) {
   document.body.appendChild(ghost);
   const g = ghost.getBoundingClientRect();
   const t = target || { x: innerWidth / 2, y: 40, w: 60, h: 84 };
+  const dx = t.x - g.x + (t.w - g.w) / 2;
+  const dy = t.y - g.y + (t.h - g.h) / 2;
+  if (opts.flip) {
+    // fine giro: la carta si gira (faccia in giù a metà volo) e scivola a
+    // destra nella lane, dimensione reale (mai ingrandita)
+    const dur = 760;
+    const anim = ghost.animate([
+      { transform: 'none', opacity: 1 },
+      { transform: `translate(${dx}px, ${dy}px) rotateY(90deg)`, offset: 0.45 },
+      { transform: `translate(${dx}px, ${dy}px) rotateY(90deg)`, offset: 0.55 },
+      { transform: `translate(${dx}px, ${dy}px) rotateY(0deg)`, opacity: 0.85 },
+    ], { duration: dur, easing: 'cubic-bezier(.3,.65,.3,1)' });
+    setTimeout(() => { ghost.innerHTML = Cards.back(); }, dur * 0.5);
+    anim.onfinish = () => {
+      ghost.remove();
+      // la lane accumula un dorso per ogni carta battuta (lo scarto)
+      const mini = document.createElement('div');
+      mini.className = 'lane-mini';
+      mini.dataset.id = 'c-' + card;
+      mini.innerHTML = `<div class="card">${Cards.back()}</div>`;
+      $('#lane').appendChild(mini);
+    };
+    return;
+  }
   ghost.animate(
     [
       { transform: 'none', opacity: 1 },
-      { transform: `translate(${t.x - g.x + (t.w - g.w) / 2}px, ${t.y - g.y + (t.h - g.h) / 2}px) scale(.9)`, opacity: 0.12 },
+      { transform: `translate(${dx}px, ${dy}px) scale(.9)`, opacity: 0.12 },
     ],
     { duration: 430, easing: 'cubic-bezier(.3,.8,.3,1)' }
   ).onfinish = () => ghost.remove();
@@ -315,14 +337,11 @@ function renderPairs(s) {
   const box = $('#pairs');
   box.innerHTML = '';
   s.table.forEach((p, i) => {
-    const pid = p.stack.join(',') + '|' + (p.defense || '');
-    // coppia già animata verso la lane: non si ridisegna al centro
-    if (p.defense && state.donePairs.has(pid)) return;
     const pair = document.createElement('div');
-    pair.className = 'pair' + (p.open ? ' open' : '') + (p.defense ? ' done' : '');
-    pair.dataset.pid = pid;
-    // carte dello stesso valore AFFIANCATE (non sovrapposte): la fila cresce
-    // verso destra; la difesa si posa sopra l'ultima carta (l'attacco corrente)
+    pair.className = 'pair' + (p.open ? ' open' : '');
+    // carte dello stesso valore AFFIANCATE (mai una sopra l'altra): la fila
+    // cresce verso destra; la risposta si posa sopra l'ultima carta.
+    // Le coppie completate RESTANO al centro finché il giro non si chiude.
     const n = p.stack.length;
     pair.style.width = (cardW() + (n - 1) * STACK_OFF + (p.defense ? 26 : 0)) + 'px';
     p.stack.forEach((card, si) => {
@@ -344,61 +363,6 @@ function renderPairs(s) {
     box.appendChild(pair);
     if (p.open) renderTransferSlot(pair, s);
   });
-}
-
-/* coppia completata: si gira (faccia in giù) e scivola a destra nella lane.
-   Attende che il volo della carta di difesa (flyTo) sia finito. */
-function flipPairToLane(pairEl, pid) {
-  const cards = [...pairEl.querySelectorAll('[data-id]')].map(x => x.dataset.id.replace('c-', ''));
-  const lane = $('#lane');
-  if (!lane) return;
-  setTimeout(() => {
-    if (!pairEl.isConnected) return;
-    const lr = lane.getBoundingClientRect();
-    const pr = pairEl.getBoundingClientRect();
-    const dx = lr.left + lr.width / 2 - (pr.left + pr.width / 2);
-    const dy = lr.top + lr.height / 2 - (pr.top + pr.height / 2);
-    const dur = 720;
-    const anim = pairEl.animate([
-      { transform: 'translate(0,0) rotateY(0deg)', opacity: 1 },
-      { transform: `translate(${dx}px, ${dy}px) rotateY(90deg)`, offset: 0.48 },
-      { transform: `translate(${dx}px, ${dy}px) rotateY(90deg)`, offset: 0.52 },
-      { transform: `translate(${dx}px, ${dy}px) rotateY(0deg)`, opacity: 1 },
-    ], { duration: dur, easing: 'cubic-bezier(.3,.65,.3,1)' });
-    // a 90° (carta di taglio) diventa un mazzetto di dorsi, mantenendo i
-    // data-id per il volo di ritorno in caso di presa
-    setTimeout(() => {
-      if (pairEl.isConnected) {
-        pairEl.innerHTML = cards.map(c =>
-          `<div class="lane-mini" data-id="c-${c}"><div class="card">${Cards.back()}</div></div>`
-        ).join('');
-      }
-    }, dur * 0.5);
-    anim.onfinish = () => {
-      anim.cancel();
-      pairEl.removeAttribute('style');
-      lane.appendChild(pairEl);
-      const k = lane.querySelectorAll('.pair').length - 1;
-      pairEl.style.position = 'absolute';
-      pairEl.style.left = (k * 6) + 'px';
-      pairEl.style.top = (k * 5) + 'px';
-      pairEl.style.transform = `rotate(${k % 2 ? -5 : 5}deg)`;
-      state.donePairs.add(pid);
-    };
-  }, 560);
-}
-
-/* dopo una presa, le coppie della lane che erano sul tavolo tornano in mano:
-   il volo è già partito (flyTo), qui si svuota la lane a volo finito */
-function laneCleanupAfterTake(s) {
-  if (s.last_action !== 'take' || !state.prevS) return;
-  const prevIds = new Set(tableCards(state.prevS));
-  setTimeout(() => {
-    document.querySelectorAll('#lane .pair').forEach(el => {
-      const ids = [...el.querySelectorAll('[data-id]')].map(x => x.dataset.id);
-      if (ids.some(id => prevIds.has(id))) el.remove();
-    });
-  }, 720);
 }
 
 /* slot ⟳ del trasferimento, accanto alla coppia con l'attacco aperto */
@@ -457,12 +421,17 @@ function renderActions(s) {
   const pass = $('#pass-btn');
   take.hidden = !s.can_take;
   pass.hidden = !s.can_pass;
+  // in attack il pulsante chiude l'attacco multi-carta; in throw_in finisce il giro
+  pass.textContent = s.phase === 'attack' ? 'Fatto ✓' : 'Basta';
 
   let status;
   if (s.phase === 'over') status = '';
   else if (!myTurn) status = `«${s.opp_name}» sta pensando…`;
-  else if (s.phase === 'attack') status = 'Tocca a te: scegli una carta da attaccare';
-  else if (s.phase === 'defend') {
+  else if (s.phase === 'attack') {
+    status = s.table.length
+      ? 'Tocca a te: gioca altre carte dello stesso valore o premi «Fatto»'
+      : 'Tocca a te: scegli una carta da attaccare (puoi giocarne più di una dello stesso valore)';
+  } else if (s.phase === 'defend') {
     status = s.transfer_ranks.length
       ? 'Tocca a te: batti (tocca la carta, poi la coppia), trasferisci con lo stesso valore o prendi'
       : 'Tocca a te: batti la carta o prendi';
@@ -515,6 +484,13 @@ function resolvePlay(c, wrap) {
   const mine = s.viewer;
 
   if (s.phase === 'attack' && s.attacker === mine) {
+    // la prima carta è libera; le successive devono avere un valore già sul
+    // tavolo (regola переводной: apertura con due carte dello stesso valore)
+    if (s.table.length && !tableRanks(s).has(rankOf(c))) {
+      toast('Puoi giocare solo carte dello stesso valore di quelle sul tavolo', true);
+      shakeWrap(wrap);
+      return false;
+    }
     send({ type: 'play', card: c });
     return true;
   }

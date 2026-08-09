@@ -49,6 +49,15 @@ def move_from_state(s, rng, kind: str) -> dict:
     hand = s["hand"]
     trump = s["trump"]
     if s["phase"] == "attack":
+        if s["table"]:
+            # attacco multi-carta: solo carte stesso-valore del tavolo, altrimenti
+            # si chiude l'attacco (pass)
+            ranks = {c[0] for c in table_cards(s)}
+            cands = [c for c in hand if c[0] in ranks]
+            if not cands:
+                return {"action": "pass"}
+            card = min(cands, key=lambda c: (c[1] == trump, RANK_ORDER[c[0]]))
+            return {"action": "attack", "card": card}
         card = min(hand, key=lambda c: (c[1] == trump, RANK_ORDER[c[0]]))
         return {"action": "attack", "card": card}
     if s["phase"] == "throw_in":

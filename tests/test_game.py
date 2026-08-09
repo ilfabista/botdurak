@@ -116,14 +116,20 @@ def test_trasferimento_scambia_i_ruoli():
 
 
 def test_catena_di_trasferimenti():
-    g = game_with(["6H", "6S"], ["6D"], [], "S", attacker=0)
+    g = game_with(["6H", "6S"], ["6D", "6C"], [], "S", attacker=0)
     g.play_attack(0, "6H")
+    g.pass_turn(0)                          # chiude l'attacco → tocca al difensore
     g.transfer(1, "6D")                     # 1 trasferisce
     assert g.attacker == 1 and g.defender == 0
     g.transfer(0, "6S")                     # 0 risponde trasferendo di nuovo
     assert g.attacker == 0 and g.defender == 1
     assert g.table[0]["stack"] == ["6H", "6D", "6S"]
     assert g.open_card() == "6S"
+    # la catena si ferma quando chi riceverebbe l'attacco non ha carte:
+    # 1 ha ancora 6C ma 0 ha la mano vuota → trasferimento vietato
+    assert g.transfer_ranks(1) == []
+    with pytest.raises(ValueError):
+        g.transfer(1, "6C")
 
 
 def test_trasferimento_solo_stesso_valore_dell_attacco_aperto():
@@ -141,6 +147,55 @@ def test_trasferimento_dopo_risposta_non_permesso():
     assert g.phase == "throw_in"
     with pytest.raises(ValueError):
         g.transfer(1, "6D")                 # non è più in difesa
+
+
+# ------------------------------------------------------------- attacco multi-carta
+
+def test_apertura_con_due_otto_affiancate():
+    """Regola переводной: a tavolo vuoto si entra con due carte dello stesso
+    valore; ognuna è un attacco separato che il difensore batte a parte."""
+    g = game_with(["8S", "8D", "8C", "6H"], ["9S", "9D", "9C", "7H"], [], "S", attacker=0)
+    g.play_attack(0, "8S")
+    assert g.phase == "attack"              # l'attaccante può giocare ancora
+    g.play_attack(0, "8D")                  # stessa coppia di valori: permesso
+    assert g.phase == "attack"
+    assert len(g.table) == 2                # due attacchi separati, affiancati
+    assert all(p["open"] for p in g.table)
+    # una carta di valore assente sul tavolo non è giocabile
+    with pytest.raises(ValueError):
+        g.play_attack(0, "6H")
+    g.play_attack(0, "8C")                  # terzo 8: ancora permesso
+    assert g.phase == "defend"              # poi l'attacco si chiude da solo
+    # il difensore batte i tre attacchi uno alla volta
+    g.play_defense(1, "9S")                 # batte l'8S
+    assert g.phase == "defend"              # restano aperte 8D e 8C
+    g.play_defense(1, "9D")
+    assert g.phase == "defend"
+    g.play_defense(1, "9C")                 # ultimo attacco battuto
+    assert g.phase == "throw_in"
+    assert all(not p["open"] for p in g.table)
+
+
+def test_attacco_singolo_si_chiude_da_solo():
+    """Senza altre carte stesso-valore in mano, l'attacco passa subito al
+    difensore (niente click extra)."""
+    g = game_with(["6H", "9D"], ["7H"], [], "S", attacker=0)
+    g.play_attack(0, "6H")
+    assert g.phase == "defend"              # 9D non è un 6: attacco chiuso
+    assert not g.can_pass(0)
+
+
+def test_trasferimento_vietato_se_avversario_senza_carte():
+    """Non si trasferisce a un avversario che non può difendere (mano vuota):
+    con il mazzo finito sarebbe un ciclo infinito trasferisci-e-prendi."""
+    g = game_with(["6H", "6S"], ["6D"], [], "S", attacker=0)
+    g.play_attack(0, "6H")
+    g.pass_turn(0)
+    g.transfer(1, "6D")                     # 0 ha ancora 6S: permesso
+    assert g.attacker == 1 and g.defender == 0
+    assert g.transfer_ranks(0) == []        # 1 ha la mano vuota
+    with pytest.raises(ValueError):
+        g.transfer(0, "6S")
 
 
 # ------------------------------------------------------------- presa e giro pulito
@@ -166,11 +221,11 @@ def test_giro_pulito_scambia_ruoli():
 
 
 def test_presa_dopo_trasferimento():
-    g = game_with(["6H"], ["6D", "7D"], [], "S", attacker=0)
-    g.play_attack(0, "6H")
+    g = game_with(["6H", "9H"], ["6D", "7D"], [], "S", attacker=0)
+    g.play_attack(0, "6H")                  # 9H non è un 6: attacco chiuso
     g.transfer(1, "6D")                     # 1 trasferisce, 0 ora difende
     g.take(0)                               # 0 prende tutto
-    assert g.hands[0] == ["6H", "6D"]
+    assert g.hands[0] == ["9H", "6H", "6D"]
     assert g.attacker == 1 and g.defender == 0  # chi ha trasferito attacca
 
 
@@ -181,6 +236,7 @@ def test_lancio_solo_stesso_valore_e_massimo_6_coppie():
                   ["7H", "7D", "7S", "8H", "8D", "8S"],
                   [], "S", attacker=0)
     g.play_attack(0, "6H")
+    g.pass_turn(0)                          # chiude l'attacco
     g.play_defense(1, "7H")
     g.play_attack(0, "6D")                  # lancio: 6 uguale alla 6H
     assert g.phase == "defend"
@@ -197,6 +253,7 @@ def test_lancio_solo_stesso_valore_e_massimo_6_coppie():
                    ["7H", "7D", "7C", "7S", "8H", "9H"],
                    [], "S", attacker=0)
     g2.play_attack(0, "6H")
+    g2.pass_turn(0)                          # chiude l'attacco (0 ha altri 6)
     g2.play_defense(1, "7H")
     for _ in range(5):
         pass  # (lo scenario completo del limite è coperto dallo stress test)
@@ -205,6 +262,7 @@ def test_lancio_solo_stesso_valore_e_massimo_6_coppie():
 def test_non_si_attacca_difensore_senza_carte():
     g = game_with(["6H", "6D"], ["7H"], ["8C", "9C", "TC", "JC", "QC", "KC"], "S", attacker=0)
     g.play_attack(0, "6H")
+    g.pass_turn(0)                          # chiude l'attacco
     g.play_defense(1, "7H")                 # 1 resta senza carte, mazzo non vuoto
     assert g.phase == "throw_in"
     with pytest.raises(ValueError):

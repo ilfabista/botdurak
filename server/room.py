@@ -16,7 +16,8 @@ from . import ai
 
 TURN_TIME = 45.0            # secondi per mossa (epoch, informativo: il server
                             # NON salta il turno allo scadere — si aspetta il giocatore)
-AI_DELAY = 0.9              # pausa "pensiero" dell'IA in modalità demo
+AI_DELAY = 1.6              # pausa "pensiero" dell'IA in modalità demo:
+                            # abbastanza lunga da seguire il passaggio di turno
 AUTO_PASS_DELAY = 5.0       # grazia prima dell'auto-pass su difensore senza carte:
                             # qualche secondo per decidere se lanciare altro
 ROOM_IDLE_MAX = 900         # 15 min senza attività → rimozione
