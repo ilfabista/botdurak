@@ -376,7 +376,7 @@ function renderActions(s) {
   else if (s.phase === 'attack') status = 'Tocca a te: scegli una carta da attaccare';
   else if (s.phase === 'defend') {
     status = s.transfer_ranks.length
-      ? 'Tocca a te: batti, trasferisci con lo stesso valore (↻) o prendi'
+      ? 'Tocca a te: batti (tocca la carta, poi la coppia), trasferisci con lo stesso valore o prendi'
       : 'Tocca a te: batti la carta o prendi';
   } else if (s.phase === 'throw_in') status = 'Tocca a te: lancia una carta uguale o premi «Basta»';
   $('#status-line').textContent = status;
@@ -442,6 +442,16 @@ function onCardClick(c, wrap) {
     return;
   }
   if (s.phase === 'defend' && s.defender === mine) {
+    // trasferimento con UN tocco: carta dello stesso valore dell'attacco
+    // aperto → l'attacco passa all'avversario (regola переводной)
+    const open = s.table.find(p => p.open);
+    if (open && s.transfer_ranks.includes(rankOf(c))) {
+      state.selected = null;
+      document.querySelectorAll('.hcard.lifted').forEach(e => e.classList.remove('lifted'));
+      send({ type: 'transfer', card: c });
+      return;
+    }
+    // carta che batte: selezione, poi un tocco sulla coppia per confermare
     if (state.selected === c) {
       state.selected = null;
       wrap.classList.remove('lifted');
@@ -454,12 +464,10 @@ function onCardClick(c, wrap) {
 }
 
 function onCardDbl(c) {
+  // il trasferimento ora avviene con un tocco singolo (onCardClick);
+  // il doppio tocco resta come fallback per il beat immediato
   const s = state.s;
   if (!s || s.phase !== 'defend' || s.defender !== s.viewer) return;
-  if (s.transfer_ranks.includes(rankOf(c))) {
-    send({ type: 'transfer', card: c });
-    return;
-  }
   const open = s.table.find(p => p.open);
   if (open && beatsCard(c, open.stack[open.stack.length - 1], s.trump)) {
     send({ type: 'beat', card: c });
@@ -544,7 +552,10 @@ function eventToasts(s) {
   }
 }
 
-/* anello del timer: attivo sul chip di chi deve muovere */
+/* anello del timer: attivo sul chip di chi deve muovere.
+   Durata allineata a TURN_TIME del server (45s); allo scadere l'anello
+   resta fermo — il turno NON viene saltato automaticamente. */
+const TURN_SECONDS = 45;
 let lastRingOwner = null;
 function timerLoop() {
   const s = state.s;
@@ -557,7 +568,7 @@ function timerLoop() {
     ring.classList.remove('idle');
     other.classList.add('idle');
     if (s.deadline) {
-      const frac = Math.max(0, Math.min(1, (s.deadline - Date.now() / 1000) / 30));
+      const frac = Math.max(0, Math.min(1, (s.deadline - Date.now() / 1000) / TURN_SECONDS));
       const fg = ring.querySelector('.ring-fg');
       fg.style.strokeDashoffset = String(C * (1 - frac));
       ring.classList.toggle('urgent', frac < 0.17);

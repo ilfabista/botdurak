@@ -289,7 +289,9 @@ class Game:
         return {
             "trump": self.trump,
             "deck_count": len(self.deck),
-            "trump_card": self.deck[-1] if len(self.deck) == 1 else None,
+            # la briscola è l'ultima carta del mazzo: resta visibile (faccia
+            # in su) finché non viene pescata
+            "trump_card": self.deck[-1] if self.deck else None,
             "hand": my_hand,
             "opp_count": len(self.hands[1 - viewer]),
             "table": [dict(p) for p in self._sorted_table()],

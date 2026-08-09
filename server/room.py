@@ -14,9 +14,11 @@ from typing import Optional
 from .game import Game
 from . import ai
 
-TURN_TIME = 30.0            # secondi per mossa (epoch, confrontabile col client)
+TURN_TIME = 45.0            # secondi per mossa (epoch, informativo: il server
+                            # NON salta il turno allo scadere — si aspetta il giocatore)
 AI_DELAY = 0.9              # pausa "pensiero" dell'IA in modalità demo
-AUTO_PASS_DELAY = 0.8       # attesa prima dell'auto-pass su difensore senza carte
+AUTO_PASS_DELAY = 5.0       # grazia prima dell'auto-pass su difensore senza carte:
+                            # qualche secondo per decidere se lanciare altro
 ROOM_IDLE_MAX = 900         # 15 min senza attività → rimozione
 ROOM_WAIT_MAX = 600         # 10 min in attesa del secondo giocatore
 ROOM_JOIN_GRACE = 90.0      # finestra in cui una stanza mai connessa è joinabile
@@ -104,8 +106,9 @@ class Room:
                         await self._toast(0, str(e))
                     continue
                 # difensore senza carte in throw_in: l'attacco è impossibile,
-                # l'attaccante passa d'ufficio (con un breve respiro per
-                # evitare la race con un lancio appena inviato dal client)
+                # l'attaccante passa d'ufficio (con una breve grazia per dare
+                # il tempo di decidere e per evitare la race con un lancio
+                # appena inviato dal client)
                 if (self.game.phase == "throw_in"
                         and not self.game.hands[self.game.defender]):
                     await asyncio.sleep(AUTO_PASS_DELAY)
@@ -114,16 +117,8 @@ class Room:
                     self.game.pass_turn(self.game.attacker)
                     self._after_move()
                     continue
-                # timeout: mossa automatica con la politica dell'IA
-                if self.deadline and time.time() > self.deadline:
-                    p = self.current_player()
-                    move = ai.choose_move(self.game, p)
-                    try:
-                        ai.apply_move(self.game, p, move)
-                        await self._toast(p, "⏱ Tempo scaduto: mossa automatica")
-                        self._after_move()
-                    except ValueError:
-                        pass
+                # NB: nessuna mossa automatica allo scadere del tempo — il
+                # giocatore decide con calma (richiesta esplicita dell'utente)
                 await asyncio.sleep(0.2)
         except asyncio.CancelledError:
             pass
