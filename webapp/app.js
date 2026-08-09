@@ -40,7 +40,8 @@ function cardW() {
   return _cardW;
 }
 /* affiancamento tra carte dello stesso valore (regola переводной) */
-const STACK_OFF = 38;
+/* (STACK_OFF rimosso: le carte dello stesso valore sono in slot affiancati,
+   distanza calcolata in renderPairs con pw + GAP) */
 
 function beatsCard(a, b, trump) {
   if (suitOf(a) === suitOf(b)) return RANK_ORDER[rankOf(a)] > RANK_ORDER[rankOf(b)];
@@ -407,20 +408,26 @@ function renderPairs(s) {
     total >= 12 ? '0.5' : total >= 8 ? '0.66' : n >= 4 ? '0.8' : '1');
   // larghezza carta scalata (--pw su #pairs, ridefinita in crowd)
   const pw = parseFloat(getComputedStyle(box).getPropertyValue('--pw').trim()) || cardW();
+  const ph = parseFloat(getComputedStyle(box).getPropertyValue('--ph').trim()) || cardW() * 1.4;
+  // carte dello stesso valore in SLOT AFFIANCATI (mai una sopra l'altra):
+  // ogni carta dello stack ha la sua casa, con un piccolo spazio tra le case
+  const GAP = 10;
+  const step = pw + GAP;
   s.table.forEach((p, i) => {
     const pair = document.createElement('div');
     pair.className = 'pair' + (p.open ? ' open' : '');
     pair.dataset.idx = i;   // indice della coppia: target esplicito per il beat
-    // carte dello stesso valore AFFIANCATE (mai una sopra l'altra): la fila
-    // cresce verso destra; la risposta si posa sopra l'ultima carta.
     // Le coppie completate RESTANO al centro finché il giro non si chiude.
     const n = p.stack.length;
-    pair.style.width = (pw + (n - 1) * STACK_OFF + (p.defense ? 26 : 0)) + 'px';
+    pair.style.width = ((n - 1) * step + pw + (p.defense ? 34 : 0)) + 'px';
+    pair.style.height = (ph + 26) + 'px';   // spazio per la risposta sollevata
     p.stack.forEach((card, si) => {
       const pc = document.createElement('div');
-      pc.className = 'pc';
+      // l'attacco APERTO (l'ultimo dello stack) è uno slot preciso: bordo
+      // tratteggiato, è lì che si draga la risposta
+      pc.className = 'pc' + (p.open && si === n - 1 ? ' open-slot' : '');
       pc.dataset.id = 'c-' + card;
-      pc.style.left = (si * STACK_OFF) + 'px';
+      pc.style.left = (si * step) + 'px';
       pc.innerHTML = Cards.face(card, suitOf(card) === s.trump);
       pair.appendChild(pc);
     });
@@ -428,7 +435,8 @@ function renderPairs(s) {
       const pc = document.createElement('div');
       pc.className = 'pc def';
       pc.dataset.id = 'c-' + p.defense;
-      pc.style.left = ((n - 1) * STACK_OFF + 8) + 'px';
+      pc.style.left = ((n - 1) * step + 6) + 'px';
+      pc.style.top = '-16px';
       pc.innerHTML = Cards.face(p.defense, suitOf(p.defense) === s.trump);
       pair.appendChild(pc);
     }
@@ -441,7 +449,7 @@ function renderPairs(s) {
 function renderTransferSlot(pairEl, s) {
   const slot = document.createElement('div');
   slot.className = 'tslot';
-  slot.title = 'Trasferisci l\'attacco: gioca una carta dello stesso valore';
+  slot.title = 'Transfer the attack: play a card of the same rank';
   slot.innerHTML = '<span class="rot">↻</span>';
   const actionable = s.phase === 'defend' && s.defender === s.viewer;
   slot.classList.toggle('active', actionable && s.transfer_ranks.length > 0);
@@ -665,6 +673,15 @@ function onPointerUp(e, c, wrap) {
   if (overTable) {
     // se il rilascio è su una coppia specifica, si batte QUELLA
     const pairEl = el.closest('.pair');
+    const s = state.s;
+    // con più attacchi aperti il rilascio fuori da una carta non deve
+    // scegliere da solo: si chiede di droppare sullo slot preciso
+    if (!pairEl && s && s.phase === 'defend' && s.defender === s.viewer
+        && s.table.filter(p => p.open).length > 1) {
+      clone.remove();
+      toast('Drop on the card you want to beat', true);
+      return;
+    }
     const ok = resolvePlay(c, wrap, pairEl ? +pairEl.dataset.idx : undefined);
     if (ok) afterSend(c, wrap, pairEl, clone);   // il clone consegna la carta
     else clone.remove();
