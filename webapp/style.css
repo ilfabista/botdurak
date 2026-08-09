@@ -134,7 +134,7 @@ body {
 /* anello del timer */
 .ring {
   position: absolute;
-  inset: -7px auto auto -7px;
+  inset: -7px auto auto 6px;
   width: 54px;
   height: 54px;
   pointer-events: none;
@@ -244,24 +244,26 @@ body {
 }
 #trump-reveal:empty { display: none; }
 
-/* coppie sul tavolo */
+/* coppie sul tavolo: solo la coppia aperta (o poche in lancio) sta al
+   centro; le coppie completate volano a destra nella lane. Il centro NON
+   si sposta: il contenuto cresce in orizzontale e va a capo. */
 #pairs {
   position: absolute;
-  /* centrato sullo spazio libero: compensa la colonna del mazzo a sinistra */
-  left: calc(50% - var(--card-w) * 0.36);
-  top: 47%;
+  left: 50%;
+  top: 45%;
   transform: translate(-50%, -50%);
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   align-content: center;
-  gap: 12px 16px;
-  max-width: calc(100% - 150px);
-  max-height: 78%;
+  gap: 14px 18px;
+  max-width: calc(100% - 170px);
+  min-width: min(320px, 66vw);
+  min-height: min(150px, 30vh);
   z-index: 5;
 }
 
-.pair { position: relative; width: calc(var(--card-w) + 42px); height: var(--card-h); }
+.pair { position: relative; height: calc(var(--card-h) + 12px); }
 .pair .pc {
   position: absolute;
   top: 0;
@@ -270,13 +272,42 @@ body {
   height: var(--card-h);
   filter: drop-shadow(0 5px 12px rgba(0, 0, 0, 0.5));
 }
-.pair .pc[data-si="1"] { left: 13px; z-index: 3; }
-.pair .pc[data-si="2"] { left: 26px; z-index: 4; }
-.pair .pc.def { left: -15px; top: -9px; z-index: 5; }
+.pair .pc.def { top: -12px; z-index: 6; }
+.pair.done { z-index: 8; }
 
 .pair .pc .card-svg, .card .card-svg { display: block; width: 100%; height: 100%; }
 
 .pair.open .pc:first-child { animation: open-breathe 2.2s ease-in-out infinite; }
+
+/* lane a destra: le coppie battute (girate a faccia in giù) */
+#lane {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: calc(var(--card-w) * 0.66);
+  height: calc(var(--card-h) * 0.66);
+  border: 1.5px dashed rgba(233, 239, 246, 0.16);
+  border-radius: 10px;
+  z-index: 6;
+  pointer-events: none;
+}
+#lane .pair {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+}
+#lane .lane-mini { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+#lane .lane-mini:nth-child(2) { transform: translate(4px, 3px); }
+#lane .lane-mini:nth-child(3) { transform: translate(2px, 6px); }
+#lane .lane-mini .card {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.5));
+}
 
 /* slot di trasferimento (regola переводной) */
 .tslot {
@@ -320,7 +351,7 @@ body {
   color: var(--muted);
   min-height: 20px;
   letter-spacing: 0.01em;
-  padding: 2px 70px 4px;
+  padding: 2px 100px 4px 40px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -332,7 +363,7 @@ body {
   justify-content: center;
   align-items: flex-end;
   min-height: calc(var(--card-h) + 26px);
-  padding: 8px 70px 4px;
+  padding: 8px 100px 4px 40px;
   position: relative;
 }
 #app:not(.my-turn) #hand .hcard { filter: saturate(0.55) brightness(0.85); }
@@ -347,6 +378,7 @@ body {
   transition: transform .18s ease, filter .3s;
   position: relative;
   z-index: 1;
+  touch-action: none;
 }
 .hcard:first-child { margin-left: 0; }
 .hcard .card {
@@ -361,6 +393,17 @@ body {
 }
 .hcard.lifted .card { filter: drop-shadow(0 10px 22px rgba(217, 180, 91, 0.45)); }
 .hcard.dim { opacity: 0.75; }
+.hcard.dragging { opacity: 0.3; filter: blur(1px) brightness(0.7); }
+
+/* carta trascinata: segue il dito con leggera rotazione e ombra */
+.drag-card {
+  position: fixed;
+  pointer-events: none;
+  z-index: 300;
+  transform: rotate(6deg) scale(1.12);
+  filter: drop-shadow(0 18px 30px rgba(0, 0, 0, 0.55));
+  will-change: transform;
+}
 
 #hand .hcard::after {
   content: "";
@@ -576,6 +619,6 @@ body {
   :root { --card-w: clamp(56px, 19.5vw, 72px); }
   #pairs { max-width: calc(100% - 120px); gap: 10px 10px; }
   .brand-sub { display: none; }
-  #hand { padding: 8px 60px 4px; }
-  #status-line { padding: 2px 56px 4px; }
+  #hand { padding: 8px 86px 4px 30px; }
+  #status-line { padding: 2px 82px 4px 28px; }
 }

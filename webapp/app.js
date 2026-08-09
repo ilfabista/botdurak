@@ -25,7 +25,22 @@ const state = {
   selected: null,   // carta selezionata in difesa
   rects: {},        // rect pre-render
   conn: null,
+  donePairs: new Set(),  // coppie completate già animate verso la lane
 };
+
+/* larghezza reale della carta (la CSS var --card-w è un clamp()) */
+let _cardW = null;
+function cardW() {
+  if (_cardW) return _cardW;
+  const d = document.createElement('div');
+  d.style.cssText = 'position:fixed;left:-9999px;top:0;width:var(--card-w);height:1px;';
+  document.body.appendChild(d);
+  _cardW = d.offsetWidth;
+  d.remove();
+  return _cardW;
+}
+/* affiancamento tra carte dello stesso valore (regola переводной) */
+const STACK_OFF = 38;
 
 function beatsCard(a, b, trump) {
   if (suitOf(a) === suitOf(b)) return RANK_ORDER[rankOf(a)] > RANK_ORDER[rankOf(b)];
@@ -95,7 +110,7 @@ function captureRects() {
   });
   const opp = $('#opp-hand'); if (opp) state.rects['opp-area'] = opp.getBoundingClientRect();
   const deck = $('#deck-stack'); if (deck) state.rects['deck-area'] = deck.getBoundingClientRect();
-  const disc = $('#discard-spot'); if (disc) state.rects['discard-area'] = disc.getBoundingClientRect();
+  const lane = $('#lane'); if (lane) state.rects['discard-area'] = lane.getBoundingClientRect();
 }
 
 function applyState(s) {
@@ -107,6 +122,11 @@ function applyState(s) {
   renderAll(s);
   if (deal) { dealIn(); }
   else { animateTransitions(s); }
+  // coppie appena completate: girate e spedite a destra nella lane
+  document.querySelectorAll('#pairs .pair.done').forEach(el => {
+    if (!state.donePairs.has(el.dataset.pid)) flipPairToLane(el, el.dataset.pid);
+  });
+  laneCleanupAfterTake(s);
   state.prev = { hand: new Set(s.hand), table: new Set(tableCards(s)), opp: s.opp_count, deck: s.deck_count };
   if (state.first) { state.first = false; toast('🎴 Partita iniziata — briscola ' + SUIT_SYM[s.trump]); }
   eventToasts(s);
@@ -175,6 +195,9 @@ function cardNode(c) {
 function flyTo(el, src, opts = {}) {
   const dst = el.getBoundingClientRect();
   if (!src || (Math.abs(src.x - dst.x) < 8 && Math.abs(src.y - dst.y) < 8)) return;
+  // salva gli inline originali: al termine vanno RIPRISTINATI (non svuotati),
+  // altrimenti si perdono posizionamenti come l'affiancamento delle carte
+  const origLeft = el.style.left, origTop = el.style.top, origMargin = el.style.margin;
   el.style.position = 'fixed';
   el.style.left = '0';
   el.style.top = '0';
@@ -191,9 +214,9 @@ function flyTo(el, src, opts = {}) {
   );
   anim.onfinish = () => {
     el.style.position = '';
-    el.style.left = '';
-    el.style.top = '';
-    el.style.margin = '';
+    el.style.left = origLeft;
+    el.style.top = origTop;
+    el.style.margin = origMargin;
     el.style.transform = '';
     el.style.zIndex = '';
   };
@@ -292,14 +315,21 @@ function renderPairs(s) {
   const box = $('#pairs');
   box.innerHTML = '';
   s.table.forEach((p, i) => {
+    const pid = p.stack.join(',') + '|' + (p.defense || '');
+    // coppia già animata verso la lane: non si ridisegna al centro
+    if (p.defense && state.donePairs.has(pid)) return;
     const pair = document.createElement('div');
-    pair.className = 'pair' + (p.open ? ' open' : '');
-    if (p.open) pair.dataset.open = '1';
+    pair.className = 'pair' + (p.open ? ' open' : '') + (p.defense ? ' done' : '');
+    pair.dataset.pid = pid;
+    // carte dello stesso valore AFFIANCATE (non sovrapposte): la fila cresce
+    // verso destra; la difesa si posa sopra l'ultima carta (l'attacco corrente)
+    const n = p.stack.length;
+    pair.style.width = (cardW() + (n - 1) * STACK_OFF + (p.defense ? 26 : 0)) + 'px';
     p.stack.forEach((card, si) => {
       const pc = document.createElement('div');
-      pc.className = 'pc' + (si > 0 ? ' tr' : '');
+      pc.className = 'pc';
       pc.dataset.id = 'c-' + card;
-      pc.dataset.si = si;
+      pc.style.left = (si * STACK_OFF) + 'px';
       pc.innerHTML = Cards.face(card, suitOf(card) === s.trump);
       pair.appendChild(pc);
     });
@@ -307,12 +337,68 @@ function renderPairs(s) {
       const pc = document.createElement('div');
       pc.className = 'pc def';
       pc.dataset.id = 'c-' + p.defense;
+      pc.style.left = ((n - 1) * STACK_OFF + 8) + 'px';
       pc.innerHTML = Cards.face(p.defense, suitOf(p.defense) === s.trump);
       pair.appendChild(pc);
     }
     box.appendChild(pair);
     if (p.open) renderTransferSlot(pair, s);
   });
+}
+
+/* coppia completata: si gira (faccia in giù) e scivola a destra nella lane.
+   Attende che il volo della carta di difesa (flyTo) sia finito. */
+function flipPairToLane(pairEl, pid) {
+  const cards = [...pairEl.querySelectorAll('[data-id]')].map(x => x.dataset.id.replace('c-', ''));
+  const lane = $('#lane');
+  if (!lane) return;
+  setTimeout(() => {
+    if (!pairEl.isConnected) return;
+    const lr = lane.getBoundingClientRect();
+    const pr = pairEl.getBoundingClientRect();
+    const dx = lr.left + lr.width / 2 - (pr.left + pr.width / 2);
+    const dy = lr.top + lr.height / 2 - (pr.top + pr.height / 2);
+    const dur = 720;
+    const anim = pairEl.animate([
+      { transform: 'translate(0,0) rotateY(0deg)', opacity: 1 },
+      { transform: `translate(${dx}px, ${dy}px) rotateY(90deg)`, offset: 0.48 },
+      { transform: `translate(${dx}px, ${dy}px) rotateY(90deg)`, offset: 0.52 },
+      { transform: `translate(${dx}px, ${dy}px) rotateY(0deg)`, opacity: 1 },
+    ], { duration: dur, easing: 'cubic-bezier(.3,.65,.3,1)' });
+    // a 90° (carta di taglio) diventa un mazzetto di dorsi, mantenendo i
+    // data-id per il volo di ritorno in caso di presa
+    setTimeout(() => {
+      if (pairEl.isConnected) {
+        pairEl.innerHTML = cards.map(c =>
+          `<div class="lane-mini" data-id="c-${c}"><div class="card">${Cards.back()}</div></div>`
+        ).join('');
+      }
+    }, dur * 0.5);
+    anim.onfinish = () => {
+      anim.cancel();
+      pairEl.removeAttribute('style');
+      lane.appendChild(pairEl);
+      const k = lane.querySelectorAll('.pair').length - 1;
+      pairEl.style.position = 'absolute';
+      pairEl.style.left = (k * 6) + 'px';
+      pairEl.style.top = (k * 5) + 'px';
+      pairEl.style.transform = `rotate(${k % 2 ? -5 : 5}deg)`;
+      state.donePairs.add(pid);
+    };
+  }, 560);
+}
+
+/* dopo una presa, le coppie della lane che erano sul tavolo tornano in mano:
+   il volo è già partito (flyTo), qui si svuota la lane a volo finito */
+function laneCleanupAfterTake(s) {
+  if (s.last_action !== 'take' || !state.prevS) return;
+  const prevIds = new Set(tableCards(state.prevS));
+  setTimeout(() => {
+    document.querySelectorAll('#lane .pair').forEach(el => {
+      const ids = [...el.querySelectorAll('[data-id]')].map(x => x.dataset.id);
+      if (ids.some(id => prevIds.has(id))) el.remove();
+    });
+  }, 720);
 }
 
 /* slot ⟳ del trasferimento, accanto alla coppia con l'attacco aperto */
@@ -352,7 +438,9 @@ function renderHand(s) {
     card.innerHTML = Cards.face(c, suitOf(c) === s.trump);
     wrap.appendChild(card);
     if (!myTurn) wrap.classList.add('dim');
-    wrap.addEventListener('click', () => onCardClick(c, wrap));
+    wrap.addEventListener('pointerdown', e => onPointerDown(e, c, wrap));
+    wrap.addEventListener('pointermove', onPointerMove);
+    wrap.addEventListener('pointerup', e => onPointerUp(e, c, wrap));
     wrap.addEventListener('dblclick', () => onCardDbl(c));
     hand.appendChild(wrap);
   });
@@ -419,26 +507,127 @@ function renderOverlay(s) {
 
 /* ============================== interazioni ============================== */
 
+/* Gioca la carta secondo la fase: attacco, lancio, trasferimento o battuta.
+   Ritorna true se la mossa è stata inviata. */
+function resolvePlay(c, wrap) {
+  const s = state.s;
+  if (!s || s.phase === 'over') return false;
+  const mine = s.viewer;
+
+  if (s.phase === 'attack' && s.attacker === mine) {
+    send({ type: 'play', card: c });
+    return true;
+  }
+  if (s.phase === 'throw_in' && s.attacker === mine) {
+    if (s.defender_empty) {
+      toast('Il difensore non ha carte: premi «Basta»', true);
+      return false;
+    }
+    if (tableRanks(s).has(rankOf(c))) { send({ type: 'play', card: c }); return true; }
+    toast('Puoi lanciare solo carte dello stesso valore di quelle sul tavolo', true);
+    shakeWrap(wrap);
+    return false;
+  }
+  if (s.phase === 'defend' && s.defender === mine) {
+    const open = s.table.find(p => p.open);
+    if (open && s.transfer_ranks.includes(rankOf(c))) {
+      send({ type: 'transfer', card: c });
+      return true;
+    }
+    if (open && beatsCard(c, open.stack[open.stack.length - 1], s.trump)) {
+      send({ type: 'beat', card: c });
+      return true;
+    }
+    toast('Quella carta non batte l\'attacco', true);
+    shakeWrap(wrap);
+    return false;
+  }
+  return false;
+}
+
+function shakeWrap(wrap) {
+  wrap.classList.add('shake');
+  setTimeout(() => wrap.classList.remove('shake'), 350);
+}
+
+/* ---- drag & drop: la carta segue il dito, il rilascio sul tavolo gioca ---- */
+let drag = null;
+let suppressClick = false;
+
+function onPointerDown(e, c, wrap) {
+  const s = state.s;
+  if (!s || s.phase === 'over' || !isMyTurn(s)) return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  drag = { card: c, wrap, clone: null, x: e.clientX, y: e.clientY, moved: false, offX: 0, offY: 0 };
+  try { wrap.setPointerCapture(e.pointerId); } catch { /* ok */ }
+}
+
+function onPointerMove(e) {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (!drag.moved && Math.hypot(dx, dy) > 8) {
+    drag.moved = true;
+    const r = drag.wrap.getBoundingClientRect();
+    drag.offX = r.width / 2;
+    drag.offY = r.height / 2;
+    drag.clone = document.createElement('div');
+    drag.clone.className = 'drag-card';
+    drag.clone.innerHTML = Cards.face(drag.card, suitOf(drag.card) === state.s.trump);
+    drag.clone.style.width = r.width + 'px';
+    drag.clone.style.height = r.height + 'px';
+    document.body.appendChild(drag.clone);
+    drag.wrap.classList.add('dragging');
+  }
+  if (drag.moved && drag.clone) {
+    drag.clone.style.left = (e.clientX - drag.offX) + 'px';
+    drag.clone.style.top = (e.clientY - drag.offY) + 'px';
+  }
+}
+
+function onPointerUp(e, c, wrap) {
+  if (!drag) return;
+  const wasDrag = drag.moved;
+  const clone = drag.clone;
+  drag = null;
+  wrap.classList.remove('dragging');
+  if (!wasDrag) {
+    // tocco semplice: comportamento click (selezione o trasferimento)
+    onCardClick(c, wrap);
+    return;
+  }
+  suppressClick = true;
+  setTimeout(() => { suppressClick = false; }, 80);
+  if (!clone) return;
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  const overTable = el && el.closest('#pairs, #lane');
+  if (overTable) {
+    clone.remove();
+    resolvePlay(c, wrap);
+    return;
+  }
+  // rilascio fuori dal tavolo: la carta torna al suo posto
+  const wr = wrap.getBoundingClientRect();
+  const cr = clone.getBoundingClientRect();
+  clone.animate([
+    { transform: 'none', opacity: 1 },
+    {
+      transform: `translate(${wr.left + wr.width / 2 - (cr.left + cr.width / 2)}px, ${wr.top + wr.height / 2 - (cr.top + cr.height / 2)}px) scale(.7)`,
+      opacity: 0,
+    },
+  ], { duration: 230, easing: 'ease-in' }).onfinish = () => clone.remove();
+}
+
 function onCardClick(c, wrap) {
   const s = state.s;
   if (!s || s.phase === 'over') return;
   const mine = s.viewer;
 
   if (s.phase === 'attack' && s.attacker === mine) {
-    send({ type: 'play', card: c });
+    resolvePlay(c, wrap);
     return;
   }
   if (s.phase === 'throw_in' && s.attacker === mine) {
-    if (s.defender_empty) {
-      toast('Il difensore non ha carte: premi «Basta»', true);
-      return;
-    }
-    if (tableRanks(s).has(rankOf(c))) send({ type: 'play', card: c });
-    else {
-      toast('Puoi lanciare solo carte dello stesso valore di quelle sul tavolo', true);
-      wrap.classList.add('shake');
-      setTimeout(() => wrap.classList.remove('shake'), 350);
-    }
+    resolvePlay(c, wrap);
     return;
   }
   if (s.phase === 'defend' && s.defender === mine) {
@@ -446,9 +635,7 @@ function onCardClick(c, wrap) {
     // aperto → l'attacco passa all'avversario (regola переводной)
     const open = s.table.find(p => p.open);
     if (open && s.transfer_ranks.includes(rankOf(c))) {
-      state.selected = null;
-      document.querySelectorAll('.hcard.lifted').forEach(e => e.classList.remove('lifted'));
-      send({ type: 'transfer', card: c });
+      resolvePlay(c, wrap);
       return;
     }
     // carta che batte: selezione, poi un tocco sulla coppia per confermare
@@ -507,7 +694,7 @@ function wireButtons() {
     const pairEl = e.target.closest('.pair');
     const s = state.s;
     if (!pairEl || !s || s.phase !== 'defend' || s.defender !== s.viewer) return;
-    if (!pairEl.dataset.open) return;
+    if (!pairEl.classList.contains('open')) return;
     if (!state.selected) { toast('Seleziona una carta per battere'); return; }
     const open = s.table.find(p => p.open);
     const target = open.stack[open.stack.length - 1];
