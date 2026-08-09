@@ -19,7 +19,8 @@ import os
 import pathlib
 from urllib.parse import quote
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (InlineKeyboardButton, InlineKeyboardMarkup, Update,
+                      WebAppInfo)
 from telegram.ext import (Application, CallbackQueryHandler, ChatMemberHandler,
                           CommandHandler, ContextTypes)
 
@@ -45,7 +46,12 @@ def _load_env() -> None:
 
 def game_keyboard(webapp_url: str, match_id: str, token: str, name: str) -> InlineKeyboardMarkup:
     url = f"{webapp_url}/play?m={match_id}&t={token}&name={quote(name)}"
-    return InlineKeyboardMarkup([[InlineKeyboardButton(BUTTON_TEXT, web_app=url)]])
+    # ATTENZIONE: web_app vuole un WebAppInfo, NON una stringa — con una
+    # stringa Telegram risponde BadRequest "field web_app must be of type
+    # object" e l'handler muore in silenzio.
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(BUTTON_TEXT, web_app=WebAppInfo(url=url))
+    ]])
 
 
 def private_chat_keyboard(username: str) -> InlineKeyboardMarkup:
