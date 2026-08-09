@@ -272,7 +272,7 @@ class Game:
         da battere. In 1v1 l'attacco torna all'avversario: i ruoli si scambiano
         e l'ex-attaccante deve difendere l'attacco trasferito."""
         if self.phase != "defend" or player != self.defender:
-            raise ValueError("non è il tuo turno di difesa")
+            raise ValueError("not your turn to defend")
         if card not in self.hands[player]:
             raise ValueError("card not in hand")
         if len(self.open_pairs()) != 1:
