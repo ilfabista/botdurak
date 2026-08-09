@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#070d15">
+  <title>Durak Переводной</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/config.js"></script>
+</head>
+<body>
+  <div id="app">
+
+    <!-- barra superiore: briscola, avversario, esci -->
+    <header id="topbar">
+      <div id="brand">
+        <span class="brand-ru">ДУРАК</span>
+        <span class="brand-sub">ПЕРЕВОДНОЙ</span>
+      </div>
+      <div id="trump-chip">♥&nbsp;<b>Briscola</b></div>
+      <div id="opp-chip" class="chip player-chip">
+        <svg class="ring idle" viewBox="0 0 48 48">
+          <circle class="ring-bg" cx="24" cy="24" r="21"></circle>
+          <circle class="ring-fg" cx="24" cy="24" r="21"></circle>
+        </svg>
+        <div id="opp-avatar" class="avatar">?</div>
+        <div class="pinfo">
+          <span id="opp-name" class="pname">—</span>
+          <span id="opp-badge" class="pcount">0</span>
+        </div>
+      </div>
+      <button id="leave-btn" title="Lascia la partita">✕</button>
+    </header>
+
+    <!-- tavolo: mazzo a sinistra, coppie al centro -->
+    <main id="table">
+      <div id="deck-col">
+        <div id="deck-stack">
+          <div class="mini"><div class="card"></div></div>
+          <div class="mini"><div class="card"></div></div>
+          <div class="mini"><div class="card"></div></div>
+        </div>
+        <div id="deck-count">0</div>
+        <div id="trump-reveal"></div>
+      </div>
+      <div id="pairs"></div>
+      <div id="opp-hand"></div>
+      <div id="discard-spot"></div>
+    </main>
+
+    <!-- fondo: stato, mano, chip personale, azioni -->
+    <footer id="bottom">
+      <div id="status-line">Connessione…</div>
+      <div id="hand"></div>
+      <div id="me-chip" class="chip player-chip">
+        <svg class="ring idle" viewBox="0 0 48 48">
+          <circle class="ring-bg" cx="24" cy="24" r="21"></circle>
+          <circle class="ring-fg" cx="24" cy="24" r="21"></circle>
+        </svg>
+        <div id="me-avatar" class="avatar">?</div>
+        <div class="pinfo">
+          <span id="me-name" class="pname">tu</span>
+          <span id="me-badge" class="pcount">0</span>
+        </div>
+      </div>
+      <div id="action-bar">
+        <button id="sort-btn" class="icon-btn" title="Ordina la mano">⇅</button>
+        <button id="pass-btn" class="btn ghost" hidden>Basta</button>
+        <button id="take-btn" class="btn danger" hidden>Prendi</button>
+      </div>
+    </footer>
+
+  </div>
+
+  <div id="toasts"></div>
+
+  <!-- overlay: lobby o fine partita -->
+  <div id="overlay" hidden>
+    <div class="overlay-card">
+      <div id="overlay-emblem">🎴</div>
+      <h2 id="overlay-title">…</h2>
+      <p id="overlay-sub">…</p>
+      <div id="overlay-spinner" class="spinner" hidden></div>
+      <button id="rematch-btn" hidden>Rivincita</button>
+    </div>
+  </div>
+
+  <script src="/static/cards.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

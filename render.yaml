@@ -1,0 +1,19 @@
+# Blueprint Render per il backend del Durak (host persistente: WebSocket +
+# bot polling non girano su serverless). Deploy: importa la repo su Render,
+# Render rileva render.yaml. Piano free sufficiente.
+services:
+  - type: web
+    name: durak-backend
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m server.app
+    healthCheckPath: /
+    envVars:
+      - key: BOT_TOKEN
+        sync: false          # da impostare nel dashboard (BotFather)
+      - key: WEBAPP_URL
+        sync: false          # URL della webapp su Vercel (https://...)
+      - key: CORS_ORIGINS
+        value: "*"
+      # PORT: Render la inietta automaticamente (il server la legge)
