@@ -164,7 +164,7 @@ class Game:
         try:
             self.hands[player].remove(card)
         except ValueError:
-            raise ValueError(f"carta {card} non in mano al giocatore {player}")
+            raise ValueError(f"card {card} not in {player}'s hand")
 
     def _add_pair(self, card: str, next_to: Optional[int] = None) -> dict:
         self._order_counter += 1
@@ -194,21 +194,21 @@ class Game:
         il difensore deve battere singolarmente; se non batte tutto, prende.
         """
         if self.phase not in ("attack", "throw_in"):
-            raise ValueError("non è il momento di attaccare")
+            raise ValueError("not the moment to attack")
         if player != self.attacker:
-            raise ValueError("non è il tuo turno di attacco")
+            raise ValueError("not your turn to attack")
         if card not in self.hands[player]:
-            raise ValueError("carta non in mano")
+            raise ValueError("card not in hand")
         # massimo 6 coppie = 12 carte: un attacco deve lasciare lo spazio per
         # la risposta (a 11 carte il tavolo è pieno)
         if len(self.table_cards()) >= MAX_PAIRS * 2 - 1:
-            raise ValueError("tavolo pieno")
+            raise ValueError("table full")
 
         if self.phase == "throw_in":
             if rank(card) not in self.table_ranks():
-                raise ValueError("puoi lanciare solo carte dello stesso valore")
+                raise ValueError("you can only throw cards of matching rank")
             if not self.hands[self.defender]:
-                raise ValueError("il difensore non ha carte")
+                raise ValueError("the defender has no cards")
             self._remove(player, card)
             self._add_pair(card)
             self.last_action = "throw"
@@ -219,9 +219,9 @@ class Game:
             # senza carte (come nel lancio)
             if self.table and rank(card) not in self.table_ranks():
                 raise ValueError(
-                    "puoi giocare solo carte dello stesso valore di quelle sul tavolo")
+                    "you can only play cards matching a rank on the table")
             if self.table and not self.hands[self.defender]:
-                raise ValueError("il difensore non ha carte")
+                raise ValueError("the defender has no cards")
             self._remove(player, card)
             self._add_pair(card)
             self.last_action = "attack"
@@ -230,22 +230,35 @@ class Game:
             if not any(rank(c) in self.table_ranks() for c in self.hands[player]):
                 self.phase = "defend"
 
-    def play_defense(self, player: int, card: str) -> None:
+    def play_defense(self, player: int, card: str,
+                     target: Optional[int] = None) -> None:
         """Risposta: battere un attacco aperto con una carta valida.
-        Con più attacchi aperti (apertura multi-carta) si battono uno alla
-        volta: la fase resta 'defend' finché ce n'è ancora qualcuno."""
-        if self.phase != "defend" or player != self.defender:
-            raise ValueError("non è il tuo turno di difesa")
-        if card not in self.hands[player]:
-            raise ValueError("carta non in mano")
-        pair = None
-        for p in self.open_pairs():
-            if beats(card, p["stack"][-1], self.trump):
-                pair = p
-                break
-        if pair is None:
-            raise ValueError("la carta non batte nessun attacco aperto")
 
+        `target` è l'indice della coppia da battere (usato dal giocatore
+        quando ci sono più attacchi aperti, es. apertura multi-carta); se
+        omesso, si batte la prima coppia aperta che la carta batte.
+        Con più attacchi aperti la fase resta 'defend' finché non sono
+        battuti tutti."""
+        if self.phase != "defend" or player != self.defender:
+            raise ValueError("not your turn to defend")
+        if card not in self.hands[player]:
+            raise ValueError("card not in hand")
+        if target is not None:
+            if not (0 <= target < len(self.table)):
+                raise ValueError("no such pair on the table")
+            pair = self.table[target]
+            if not pair["open"]:
+                raise ValueError("that pair is already beaten")
+            if not beats(card, pair["stack"][-1], self.trump):
+                raise ValueError("that card does not beat the attack")
+        else:
+            pair = None
+            for p in self.open_pairs():
+                if beats(card, p["stack"][-1], self.trump):
+                    pair = p
+                    break
+            if pair is None:
+                raise ValueError("that card beats no open attack")
         self._remove(player, card)
         pair["defense"] = card
         pair["open"] = False
@@ -261,18 +274,18 @@ class Game:
         if self.phase != "defend" or player != self.defender:
             raise ValueError("non è il tuo turno di difesa")
         if card not in self.hands[player]:
-            raise ValueError("carta non in mano")
+            raise ValueError("card not in hand")
         if len(self.open_pairs()) != 1:
-            raise ValueError("puoi trasferire solo con un attacco aperto")
+            raise ValueError("you can only transfer with a single open attack")
         if not self.hands[1 - player]:
-            raise ValueError("l'avversario non ha carte: non puoi trasferire")
+            raise ValueError("your opponent has no cards: you cannot transfer")
         pair = self.open_pair()
         if pair is None:
-            raise ValueError("nessun attacco aperto")
+            raise ValueError("no open attack")
         if rank(card) != rank(pair["stack"][-1]):
-            raise ValueError("la carta deve avere lo stesso valore dell'attacco")
+            raise ValueError("the card must match the attack rank")
         if len(self.table_cards()) >= MAX_PAIRS * 2 - 1:
-            raise ValueError("tavolo pieno")
+            raise ValueError("table full")
 
         self._remove(player, card)
         pair["stack"].append(card)            # la carta nuova è l'attacco aperto
@@ -284,7 +297,7 @@ class Game:
     def take(self, player: int) -> None:
         """Il difensore si arrende e prende tutte le carte del tavolo."""
         if not self.can_take(player):
-            raise ValueError("non puoi prendere ora")
+            raise ValueError("you cannot take now")
         self.hands[player].extend(self.table_cards())
         self.table.clear()
         self._order_counter = 0
@@ -297,7 +310,7 @@ class Game:
         In throw_in: tavolo pulito, le carte battute finiscono nello scarto e
         il difensore diventa attaccante."""
         if not self.can_pass(player):
-            raise ValueError("non puoi passare ora")
+            raise ValueError("you cannot pass now")
         if self.phase == "attack":
             self.last_action = "close_attack"
             self.phase = "defend"

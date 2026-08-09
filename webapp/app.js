@@ -14,7 +14,7 @@ const rankOf = c => c[0];
 const suitOf = c => c[1];
 const RANK_ORDER = { 6: 0, 7: 1, 8: 2, 9: 3, T: 4, J: 5, Q: 6, K: 7, A: 8 };
 const SUIT_SYM = { H: '♥', D: '♦', C: '♣', S: '♠' };
-const SUIT_NAME = { H: 'Cuori', D: 'Quadri', C: 'Fiori', S: 'Picche' };
+const SUIT_NAME = { H: 'Hearts', D: 'Diamonds', C: 'Clubs', S: 'Spades' };
 
 const state = {
   s: null,          // ultimo stato dal server
@@ -91,7 +91,7 @@ function connect() {
     else if (m.type === 'error') toast(m.text, true);
   };
   state.conn.onclose = () => {
-    if (!state.s || state.s.phase !== 'over') toast('Connessione persa: riconnessione…', true);
+    if (!state.s || state.s.phase !== 'over') toast('Connection lost: reconnecting…', true);
     setTimeout(connect, 2200);
   };
 }
@@ -122,7 +122,7 @@ function applyState(s) {
   if (deal) { dealIn(); }
   else { animateTransitions(s); }
   state.prev = { hand: new Set(s.hand), table: new Set(tableCards(s)), opp: s.opp_count, deck: s.deck_count };
-  if (state.first) { state.first = false; toast('🎴 Partita iniziata — briscola ' + SUIT_SYM[s.trump]); }
+  if (state.first) { state.first = false; toast('🎴 Game started — trump ' + SUIT_SYM[s.trump]); }
   eventToasts(s);
 }
 
@@ -158,12 +158,13 @@ function animateTransitions(s) {
     if (elc && src) flyTo(elc, src, { dur: 480 });
   }
 
-  // carte nuove in mano (pescata dal mazzo)
-  for (const c of s.hand) {
-    if (prev.hand.has(c) || prev.table.has(c)) continue;
+  // carte nuove in mano: pescate dal mazzo UNA PER UNA (cascata con ritardo
+  // crescente: si vede ogni carta lasciare il mazzo e raggiungere la mano)
+  const drawn = s.hand.filter(c => !prev.hand.has(c) && !prev.table.has(c));
+  drawn.forEach((c, i) => {
     const elc = cardNode(c);
-    if (elc && state.rects['deck-area']) flyTo(elc, state.rects['deck-area'], { delay: 120 });
-  }
+    if (elc && state.rects['deck-area']) flyTo(elc, state.rects['deck-area'], { delay: 140 + i * 110 });
+  });
 
   // carte sparite dal tavolo: fine giro (clear → si girano e scivolano nella
   // lane a destra, il passaggio di turno visibile) o presa dell'avversario
@@ -296,8 +297,8 @@ function renderChips(s) {
   const mb = $('#me-badge'), ob = $('#opp-badge');
   if (mb.textContent !== String(s.hand.length)) { mb.textContent = s.hand.length; mb.classList.remove('pop'); void mb.offsetWidth; mb.classList.add('pop'); }
   if (ob.textContent !== String(s.opp_count)) { ob.textContent = s.opp_count; ob.classList.remove('pop'); void ob.offsetWidth; ob.classList.add('pop'); }
-  $('#trump-chip').innerHTML = `${SUIT_SYM[s.trump]}&nbsp;<b>Briscola</b>`;
-  $('#trump-chip').title = `Briscola: ${SUIT_NAME[s.trump]}`;
+  $('#trump-chip').innerHTML = `${SUIT_SYM[s.trump]}&nbsp;<b>Trump</b>`;
+  $('#trump-chip').title = `Trump: ${SUIT_NAME[s.trump]}`;
 }
 
 function renderDeck(s) {
@@ -309,7 +310,7 @@ function renderDeck(s) {
   const reveal = $('#trump-reveal');
   if (s.trump_card) {
     reveal.innerHTML = `<div class="card">${Cards.face(s.trump_card, true)}</div>`;
-    reveal.title = 'Ultima carta del mazzo (briscola)';
+    reveal.title = 'Last card of the deck (trump)';
   } else {
     reveal.innerHTML = '';
   }
@@ -339,6 +340,7 @@ function renderPairs(s) {
   s.table.forEach((p, i) => {
     const pair = document.createElement('div');
     pair.className = 'pair' + (p.open ? ' open' : '');
+    pair.dataset.idx = i;   // indice della coppia: target esplicito per il beat
     // carte dello stesso valore AFFIANCATE (mai una sopra l'altra): la fila
     // cresce verso destra; la risposta si posa sopra l'ultima carta.
     // Le coppie completate RESTANO al centro finché il giro non si chiude.
@@ -422,20 +424,20 @@ function renderActions(s) {
   take.hidden = !s.can_take;
   pass.hidden = !s.can_pass;
   // in attack il pulsante chiude l'attacco multi-carta; in throw_in finisce il giro
-  pass.textContent = s.phase === 'attack' ? 'Fatto ✓' : 'Basta';
+  pass.textContent = s.phase === 'attack' ? 'Done ✓' : 'Enough';
 
   let status;
   if (s.phase === 'over') status = '';
-  else if (!myTurn) status = `«${s.opp_name}» sta pensando…`;
+  else if (!myTurn) status = `«${s.opp_name}» is thinking…`;
   else if (s.phase === 'attack') {
     status = s.table.length
-      ? 'Tocca a te: gioca altre carte dello stesso valore o premi «Fatto»'
-      : 'Tocca a te: scegli una carta da attaccare (puoi giocarne più di una dello stesso valore)';
+      ? 'Your turn: play more cards of the same rank or press «Done»'
+      : 'Your turn: pick a card to attack (you can play several of the same rank)';
   } else if (s.phase === 'defend') {
     status = s.transfer_ranks.length
-      ? 'Tocca a te: batti (tocca la carta, poi la coppia), trasferisci con lo stesso valore o prendi'
-      : 'Tocca a te: batti la carta o prendi';
-  } else if (s.phase === 'throw_in') status = 'Tocca a te: lancia una carta uguale o premi «Basta»';
+      ? 'Your turn: beat (tap a card, then the pair), transfer with the same rank, or take'
+      : 'Your turn: beat the card or take';
+  } else if (s.phase === 'throw_in') status = 'Your turn: throw a matching card or press «Enough»';
   $('#status-line').textContent = status;
 }
 
@@ -450,9 +452,9 @@ function renderOverlay(s) {
   if (!s.started) {
     ov.hidden = false;
     emblem.textContent = '🎴';
-    title.textContent = 'Stanza creata';
+    title.textContent = 'Room created';
     title.className = '';
-    sub.textContent = 'In attesa dell\'avversario…\nLa partita inizierà appena si connette.';
+    sub.textContent = 'Waiting for your opponent…\nThe game starts as soon as they join.';
     spinner.hidden = false;
     rematch.hidden = true;
     return;
@@ -465,20 +467,22 @@ function renderOverlay(s) {
   const won = s.winner === s.viewer;
   const drew = s.winner === -1;
   emblem.textContent = won ? '🏆' : drew ? '🤝' : '😅';
-  title.textContent = s.abandoned ? 'Avversario disconnesso' : won ? 'Hai vinto!' : drew ? 'Pareggio' : 'Sei il Durak!';
+  title.textContent = s.abandoned ? 'Opponent disconnected' : won ? 'You won!' : drew ? 'Draw' : 'You are the Durak!';
   title.className = won || s.abandoned ? 'win' : 'lose';
   sub.textContent = s.abandoned
-    ? 'La connessione dell\'avversario è caduta: partita conclusa.'
-    : won ? '«' + s.opp_name + '» è il durak di questo giro. 🎉'
-    : drew ? 'Entrambi senza carte: nessun durak.'
-    : '«' + s.opp_name + '» ha finito le carte prima di te. Rivincita?';
+    ? 'Your opponent lost connection: game over.'
+    : won ? '«' + s.opp_name + '» is the durak this round. 🎉'
+    : drew ? 'Both out of cards: no durak.'
+    : '«' + s.opp_name + '» ran out of cards before you. Rematch?';
 }
 
 /* ============================== interazioni ============================== */
 
 /* Gioca la carta secondo la fase: attacco, lancio, trasferimento o battuta.
-   Ritorna true se la mossa è stata inviata. */
-function resolvePlay(c, wrap) {
+   `targetIdx` (opzionale) è l'indice della coppia da battere, scelto con il
+   drag-drop direttamente su quella coppia. Ritorna true se la mossa è
+   stata inviata. */
+function resolvePlay(c, wrap, targetIdx) {
   const s = state.s;
   if (!s || s.phase === 'over') return false;
   const mine = s.viewer;
@@ -487,7 +491,7 @@ function resolvePlay(c, wrap) {
     // la prima carta è libera; le successive devono avere un valore già sul
     // tavolo (regola переводной: apertura con due carte dello stesso valore)
     if (s.table.length && !tableRanks(s).has(rankOf(c))) {
-      toast('Puoi giocare solo carte dello stesso valore di quelle sul tavolo', true);
+      toast('You can only play cards matching a rank on the table', true);
       shakeWrap(wrap);
       return false;
     }
@@ -496,11 +500,11 @@ function resolvePlay(c, wrap) {
   }
   if (s.phase === 'throw_in' && s.attacker === mine) {
     if (s.defender_empty) {
-      toast('Il difensore non ha carte: premi «Basta»', true);
+      toast('The defender has no cards: press «Enough»', true);
       return false;
     }
     if (tableRanks(s).has(rankOf(c))) { send({ type: 'play', card: c }); return true; }
-    toast('Puoi lanciare solo carte dello stesso valore di quelle sul tavolo', true);
+    toast('You can only throw cards matching a rank on the table', true);
     shakeWrap(wrap);
     return false;
   }
@@ -510,11 +514,23 @@ function resolvePlay(c, wrap) {
       send({ type: 'transfer', card: c });
       return true;
     }
+    // con più attacchi aperti si può scegliere QUALE battere (es. la coppia
+    // a destra): il target è l'indice della coppia sotto il dito
+    if (targetIdx != null) {
+      const pair = s.table[targetIdx];
+      if (pair && pair.open && beatsCard(c, pair.stack[pair.stack.length - 1], s.trump)) {
+        send({ type: 'beat', card: c, target: targetIdx });
+        return true;
+      }
+      toast("That card doesn't beat that attack", true);
+      shakeWrap(wrap);
+      return false;
+    }
     if (open && beatsCard(c, open.stack[open.stack.length - 1], s.trump)) {
       send({ type: 'beat', card: c });
       return true;
     }
-    toast('Quella carta non batte l\'attacco', true);
+    toast("That card doesn't beat the attack", true);
     shakeWrap(wrap);
     return false;
   }
@@ -578,7 +594,9 @@ function onPointerUp(e, c, wrap) {
   const overTable = el && el.closest('#pairs, #lane');
   if (overTable) {
     clone.remove();
-    resolvePlay(c, wrap);
+    // se il rilascio è su una coppia specifica, si batte QUELLA
+    const pairEl = el.closest('.pair');
+    resolvePlay(c, wrap, pairEl ? +pairEl.dataset.idx : undefined);
     return;
   }
   // rilascio fuori dal tavolo: la carta torna al suo posto
@@ -644,7 +662,7 @@ function tryTransfer() {
   if (!card || !s.transfer_ranks.includes(rankOf(card))) {
     card = s.hand.find(c => s.transfer_ranks.includes(rankOf(c)));
   }
-  if (!card) { toast('Ti serve una carta dello stesso valore per trasferire', true); return; }
+  if (!card) { toast('You need a card of the same rank to transfer', true); return; }
   state.selected = null;
   send({ type: 'transfer', card });
 }
@@ -662,7 +680,7 @@ function wireButtons() {
   });
   $('#rematch-btn').addEventListener('click', () => send({ type: 'rematch' }));
   $('#leave-btn').addEventListener('click', () => {
-    if (confirm('Lasciare la partita?')) {
+    if (confirm('Leave the game?')) {
       if (state.conn) state.conn.close();
     }
   });
@@ -671,14 +689,16 @@ function wireButtons() {
     const s = state.s;
     if (!pairEl || !s || s.phase !== 'defend' || s.defender !== s.viewer) return;
     if (!pairEl.classList.contains('open')) return;
-    if (!state.selected) { toast('Seleziona una carta per battere'); return; }
-    const open = s.table.find(p => p.open);
-    const target = open.stack[open.stack.length - 1];
-    if (!beatsCard(state.selected, target, s.trump)) {
-      toast('Quella carta non batte l\'attacco', true);
+    if (!state.selected) { toast('Select a card to beat with'); return; }
+    // la coppia cliccata è il TARGET (non la prima aperta): con due attacchi
+    // sul tavolo il giocatore decide quale battere (es. quello a destra)
+    const idx = +pairEl.dataset.idx;
+    const target = s.table[idx];
+    if (!target || !target.open || !beatsCard(state.selected, target.stack[target.stack.length - 1], s.trump)) {
+      toast("That card doesn't beat that attack", true);
       return;
     }
-    send({ type: 'beat', card: state.selected });
+    send({ type: 'beat', card: state.selected, target: idx });
   });
 }
 
@@ -704,13 +724,13 @@ function eventToasts(s) {
     ? prev.table.reduce((a, p) => a + p.stack.length + (p.defense ? 1 : 0), 0) : 0;
   switch (s.last_action) {
     case 'take':
-      toast((s.defender === s.viewer ? 'Hai preso ' : '«' + s.opp_name + '» ha preso ') + prevN + ' carte');
+      toast((s.defender === s.viewer ? 'You took ' : '«' + s.opp_name + '» took ') + prevN + ' cards');
       break;
-    case 'clear': toast('Giro pulito'); break;
+    case 'clear': toast('Round cleared'); break;
     case 'transfer':
       toast(s.viewer === s.attacker
-        ? 'Trasferimento! L\'attacco torna a «' + s.opp_name + '»'
-        : '«' + s.opp_name + '» ha trasferito l\'attacco: tocca a te difendere');
+        ? 'Transfer! The attack goes back to «' + s.opp_name + '»'
+        : '«' + s.opp_name + '» transferred the attack: your turn to defend');
       break;
   }
 }

@@ -185,6 +185,31 @@ def test_attacco_singolo_si_chiude_da_solo():
     assert not g.can_pass(0)
 
 
+def test_si_puo_scegliere_quale_coppia_battere():
+    """Con due attacchi aperti il difensore batte QUELLO che indica (target):
+    es. la coppia a destra, non per forza la prima."""
+    g = game_with(["8S", "8D"], ["9S", "9D"], [], "S", attacker=0)
+    g.play_attack(0, "8S")
+    g.play_attack(0, "8D")
+    # battere la coppia a DESTRA (indice 1) per prima
+    g.play_defense(1, "9D", target=1)
+    assert not g.table[1]["open"] and g.table[0]["open"]
+    assert g.phase == "defend"
+    g.play_defense(1, "9S", target=0)       # poi quella a sinistra
+    assert g.phase == "throw_in"
+    # target fuori dai limiti o coppia già battuta → rifiutato
+    g = game_with(["8S", "8D"], ["9S", "9D", "7D"], [], "S", attacker=0)
+    g.play_attack(0, "8S")
+    g.play_attack(0, "8D")
+    with pytest.raises(ValueError):
+        g.play_defense(1, "9D", target=5)
+    g.play_defense(1, "9S", target=0)
+    with pytest.raises(ValueError):
+        g.play_defense(1, "9D", target=0)   # già battuta
+    with pytest.raises(ValueError):
+        g.play_defense(1, "TD", target=1)   # non batte
+
+
 def test_trasferimento_vietato_se_avversario_senza_carte():
     """Non si trasferisce a un avversario che non può difendere (mano vuota):
     con il mazzo finito sarebbe un ciclo infinito trasferisci-e-prendi."""

@@ -25,7 +25,7 @@ ROOM_WAIT_MAX = 600         # 10 min in attesa del secondo giocatore
 ROOM_JOIN_GRACE = 90.0      # finestra in cui una stanza mai connessa è joinabile
 
 
-def sanitize_name(name: str, fallback: str = "Giocatore") -> str:
+def sanitize_name(name: str, fallback: str = "Player") -> str:
     name = (name or "").strip()[:18]
     return name or fallback
 
@@ -143,7 +143,7 @@ class Room:
             if t == "play":
                 self.game.play_attack(idx, data["card"])
             elif t == "beat":
-                self.game.play_defense(idx, data["card"])
+                self.game.play_defense(idx, data["card"], data.get("target"))
             elif t == "transfer":
                 self.game.transfer(idx, data["card"])
             elif t == "take":

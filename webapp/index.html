@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
@@ -18,7 +18,7 @@
         <span class="brand-ru">ДУРАК</span>
         <span class="brand-sub">ПЕРЕВОДНОЙ</span>
       </div>
-      <div id="trump-chip">♥&nbsp;<b>Briscola</b></div>
+      <div id="trump-chip">♥&nbsp;<b>Trump</b></div>
       <div id="opp-chip" class="chip player-chip">
         <svg class="ring idle" viewBox="0 0 48 48">
           <circle class="ring-bg" cx="24" cy="24" r="21"></circle>
@@ -30,7 +30,7 @@
           <span id="opp-badge" class="pcount">0</span>
         </div>
       </div>
-      <button id="leave-btn" title="Lascia la partita">✕</button>
+      <button id="leave-btn" title="Leave game">✕</button>
     </header>
 
     <!-- tavolo: mazzo a sinistra, coppie al centro -->
@@ -46,12 +46,12 @@
       </div>
       <div id="pairs"></div>
       <div id="opp-hand"></div>
-      <div id="lane" title="Carte battute"></div>
+      <div id="lane" title="Beaten cards"></div>
     </main>
 
     <!-- fondo: stato, mano, chip personale, azioni -->
     <footer id="bottom">
-      <div id="status-line">Connessione…</div>
+      <div id="status-line">Connecting…</div>
       <div id="hand"></div>
       <div id="me-chip" class="chip player-chip">
         <svg class="ring idle" viewBox="0 0 48 48">
@@ -60,14 +60,14 @@
         </svg>
         <div id="me-avatar" class="avatar">?</div>
         <div class="pinfo">
-          <span id="me-name" class="pname">tu</span>
+          <span id="me-name" class="pname">you</span>
           <span id="me-badge" class="pcount">0</span>
         </div>
       </div>
       <div id="action-bar">
-        <button id="sort-btn" class="icon-btn" title="Ordina la mano">⇅</button>
-        <button id="pass-btn" class="btn ghost" hidden>Basta</button>
-        <button id="take-btn" class="btn danger" hidden>Prendi</button>
+        <button id="sort-btn" class="icon-btn" title="Sort hand">⇅</button>
+        <button id="pass-btn" class="btn ghost" hidden>Enough</button>
+        <button id="take-btn" class="btn danger" hidden>Take</button>
       </div>
     </footer>
 
@@ -82,7 +82,7 @@
       <h2 id="overlay-title">…</h2>
       <p id="overlay-sub">…</p>
       <div id="overlay-spinner" class="spinner" hidden></div>
-      <button id="rematch-btn" hidden>Rivincita</button>
+      <button id="rematch-btn" hidden>Rematch</button>
     </div>
   </div>
 

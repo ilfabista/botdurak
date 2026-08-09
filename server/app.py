@@ -44,7 +44,7 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     manager: RoomManager = request.app["manager"]
     q = request.query
     demo = q.get("demo") == "1"
-    name = q.get("name", "Giocatore")
+    name = q.get("name", "Player")
     ws = web.WebSocketResponse(heartbeat=25)
     await ws.prepare(request)
 
@@ -94,7 +94,7 @@ async def api_match(request: web.Request) -> web.Response:
     except Exception:
         data = {}
     uid = data.get("uid") or secrets.token_urlsafe(12)
-    name = str(data.get("name") or "Giocatore")[:18]
+    name = str(data.get("name") or "Player")[:18]
     match_id, token = manager.register_human(str(uid), None, name)
     return web.json_response({"m": match_id, "t": token, "name": name})
 
