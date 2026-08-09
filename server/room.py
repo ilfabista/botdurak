@@ -99,12 +99,26 @@ class Room:
                     await asyncio.sleep(AI_DELAY)
                     if self.game.phase == "over":
                         break
-                    move = ai.choose_move(self.game, 1)
                     try:
+                        move = ai.choose_move(self.game, 1)
                         ai.apply_move(self.game, 1, move)
                         self._after_move()
                     except ValueError as e:
+                        # rete di sicurezza: mai un loop infinito di mosse
+                        # rifiutate — si forza una mossa sempre legale
                         await self._toast(0, str(e))
+                        fallback = {"action": "take"} if self.game.phase == "defend" \
+                            else {"action": "pass"}
+                        try:
+                            ai.apply_move(self.game, 1, fallback)
+                            self._after_move()
+                        except ValueError:
+                            pass
+                    except Exception as e:  # noqa: BLE001
+                        # un bug dell'IA non deve MAI uccidere il loop della
+                        # partita: si logga, si avvisa e si va avanti
+                        print(f"[room {self.match_id}] IA crash: {type(e).__name__}: {e}")
+                        await self._toast(0, f"IA error: {type(e).__name__}")
                     continue
                 # difensore senza carte in throw_in: l'attacco è impossibile,
                 # l'attaccante passa d'ufficio (con una breve grazia per dare

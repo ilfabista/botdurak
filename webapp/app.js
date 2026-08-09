@@ -25,6 +25,7 @@ const state = {
   selected: null,   // carta selezionata in difesa
   rects: {},        // rect pre-render
   conn: null,
+  justPlayed: new Set(),  // carte appena giocate da me: già animate in locale
 };
 
 /* larghezza reale della carta (la CSS var --card-w è un clamp()) */
@@ -88,7 +89,14 @@ function connect() {
     try { m = JSON.parse(ev.data); } catch { return; }
     if (m.type === 'state') applyState(m.state);
     else if (m.type === 'toast') toast(m.text);
-    else if (m.type === 'error') toast(m.text, true);
+    else if (m.type === 'error') {
+      // la mossa è stata rifiutata: le carte "già animate" tornano in mano
+      if (state.justPlayed.size) {
+        state.justPlayed.clear();
+        document.querySelectorAll('#hand .hcard.gone').forEach(w => w.classList.remove('gone'));
+      }
+      toast(m.text, true);
+    }
   };
   state.conn.onclose = () => {
     if (!state.s || state.s.phase !== 'over') toast('Connection lost: reconnecting…', true);
@@ -124,6 +132,7 @@ function applyState(s) {
   state.prev = { hand: new Set(s.hand), table: new Set(tableCards(s)), opp: s.opp_count, deck: s.deck_count };
   if (state.first) { state.first = false; toast('🎴 Game started — trump ' + SUIT_SYM[s.trump]); }
   eventToasts(s);
+  updateBeatable();
 }
 
 /* animazione di consegna iniziale: dal mazzo alle mani */
@@ -141,13 +150,16 @@ function animateTransitions(s) {
   if (!prev) return;
   const tab = new Set(tableCards(s));
 
-  // carte nuove sul tavolo: dalla mia mano (rect per carta) o dall'area avversaria
+  // carte nuove sul tavolo: dalla mia mano (rect per carta) o dall'area avversaria.
+  // Le carte appena giocate da ME sono già state animate in locale (ghost di
+  // consegna): arrivano al tavolo senza volo ritardato (niente "salto").
   for (const c of tab) {
     if (prev.table.has(c)) continue;
+    if (state.justPlayed.has(c)) continue;
     const elc = cardNode(c);
     if (!elc) continue;
     const src = state.rects['c-' + c] || state.rects['opp-area'];
-    if (src) flyTo(elc, src, { dur: 500 });
+    if (src) flyTo(elc, src, { dur: 560 });
   }
 
   // carte in mano che erano sul tavolo: presa → volano alla mano
@@ -218,6 +230,55 @@ function flyTo(el, src, opts = {}) {
     el.style.transform = '';
     el.style.zIndex = '';
   };
+}
+
+/* consegna immediata della carta appena giocata: sparisce subito dalla mano
+   e un fantasma vola verso la destinazione (tavolo/coppia). Quando arriva lo
+   stato dal server la carta è già "arrivata": niente volo ritardato. */
+function afterSend(c, wrap, targetEl, ghostEl) {
+  const wrapEl = wrap || document.querySelector(`[data-id="wrap-${c}"]`);
+  const s = state.s;
+  if (wrapEl) wrapEl.classList.add('gone');
+  let ghost = ghostEl;
+  if (!ghost) {
+    const r = wrapEl ? wrapEl.getBoundingClientRect() : null;
+    if (!r) { state.justPlayed.add(c); setTimeout(() => state.justPlayed.delete(c), 1500); return; }
+    ghost = document.createElement('div');
+    ghost.className = 'card ghost';
+    ghost.innerHTML = Cards.face(c, suitOf(c) === s.trump);
+    ghost.style.left = r.x + 'px';
+    ghost.style.top = r.y + 'px';
+    ghost.style.width = r.width + 'px';
+    ghost.style.height = r.height + 'px';
+    ghost.style.zIndex = '90';
+    document.body.appendChild(ghost);
+  }
+  const g = ghost.getBoundingClientRect();
+  const pairsBox = document.querySelector('#pairs');
+  const pr = pairsBox ? pairsBox.getBoundingClientRect() : { x: innerWidth / 2, y: 200, width: 60, height: 84 };
+  const t = (targetEl && targetEl.getBoundingClientRect()) || {
+    x: pr.x + pr.width / 2, y: pr.y + pr.height / 2, w: g.width, h: g.height,
+  };
+  ghost.animate([
+    { transform: 'none', opacity: 1 },
+    { transform: `translate(${t.x - g.x + (t.w - g.w) / 2}px, ${t.y - g.y + (t.h - g.h) / 2}px) scale(.95)`, opacity: 0.85 },
+  ], { duration: 260, easing: 'cubic-bezier(.3,.9,.3,1)' }).onfinish = () => ghost.remove();
+  state.justPlayed.add(c);
+  setTimeout(() => state.justPlayed.delete(c), 1500);
+}
+
+/* glow verde sulle coppie che la carta selezionata può battere */
+function updateBeatable() {
+  const s = state.s;
+  const sel = state.selected;
+  document.querySelectorAll('#pairs .pair').forEach(pair => {
+    let beat = false;
+    if (sel && s && s.phase === 'defend' && s.defender === s.viewer && pair.classList.contains('open')) {
+      const p = s.table[+pair.dataset.idx];
+      if (p) beat = beatsCard(sel, p.stack[p.stack.length - 1], s.trump);
+    }
+    pair.classList.toggle('beatable', beat);
+  });
 }
 
 /* carta che lascia il tavolo senza destinazione visibile: clone che svanisce
@@ -337,6 +398,15 @@ function renderOppHand(s) {
 function renderPairs(s) {
   const box = $('#pairs');
   box.innerHTML = '';
+  // con molte carte sul tavolo il blocco si compatta (crowd): la mano
+  // avversaria in alto non deve MAI finire sopra le carte giocate
+  const n = s.table.length;
+  const total = s.table.reduce((a, p) => a + p.stack.length + (p.defense ? 1 : 0), 0);
+  box.classList.toggle('crowd', n >= 4);
+  box.style.setProperty('--pair-scale',
+    total >= 12 ? '0.5' : total >= 8 ? '0.66' : n >= 4 ? '0.8' : '1');
+  // larghezza carta scalata (--pw su #pairs, ridefinita in crowd)
+  const pw = parseFloat(getComputedStyle(box).getPropertyValue('--pw').trim()) || cardW();
   s.table.forEach((p, i) => {
     const pair = document.createElement('div');
     pair.className = 'pair' + (p.open ? ' open' : '');
@@ -345,7 +415,7 @@ function renderPairs(s) {
     // cresce verso destra; la risposta si posa sopra l'ultima carta.
     // Le coppie completate RESTANO al centro finché il giro non si chiude.
     const n = p.stack.length;
-    pair.style.width = (cardW() + (n - 1) * STACK_OFF + (p.defense ? 26 : 0)) + 'px';
+    pair.style.width = (pw + (n - 1) * STACK_OFF + (p.defense ? 26 : 0)) + 'px';
     p.stack.forEach((card, si) => {
       const pc = document.createElement('div');
       pc.className = 'pc';
@@ -593,10 +663,11 @@ function onPointerUp(e, c, wrap) {
   const el = document.elementFromPoint(e.clientX, e.clientY);
   const overTable = el && el.closest('#pairs, #lane');
   if (overTable) {
-    clone.remove();
     // se il rilascio è su una coppia specifica, si batte QUELLA
     const pairEl = el.closest('.pair');
-    resolvePlay(c, wrap, pairEl ? +pairEl.dataset.idx : undefined);
+    const ok = resolvePlay(c, wrap, pairEl ? +pairEl.dataset.idx : undefined);
+    if (ok) afterSend(c, wrap, pairEl, clone);   // il clone consegna la carta
+    else clone.remove();
     return;
   }
   // rilascio fuori dal tavolo: la carta torna al suo posto
@@ -617,11 +688,11 @@ function onCardClick(c, wrap) {
   const mine = s.viewer;
 
   if (s.phase === 'attack' && s.attacker === mine) {
-    resolvePlay(c, wrap);
+    if (resolvePlay(c, wrap)) afterSend(c, wrap, null);
     return;
   }
   if (s.phase === 'throw_in' && s.attacker === mine) {
-    resolvePlay(c, wrap);
+    if (resolvePlay(c, wrap)) afterSend(c, wrap, null);
     return;
   }
   if (s.phase === 'defend' && s.defender === mine) {
@@ -629,7 +700,7 @@ function onCardClick(c, wrap) {
     // aperto → l'attacco passa all'avversario (regola переводной)
     const open = s.table.find(p => p.open);
     if (open && s.transfer_ranks.includes(rankOf(c))) {
-      resolvePlay(c, wrap);
+      if (resolvePlay(c, wrap)) afterSend(c, wrap, document.querySelector('#pairs .pair.open'));
       return;
     }
     // carta che batte: selezione, poi un tocco sulla coppia per confermare
@@ -641,6 +712,7 @@ function onCardClick(c, wrap) {
       document.querySelectorAll('.hcard.lifted').forEach(e => e.classList.remove('lifted'));
       wrap.classList.add('lifted');
     }
+    updateBeatable();
   }
 }
 
@@ -652,6 +724,7 @@ function onCardDbl(c) {
   const open = s.table.find(p => p.open);
   if (open && beatsCard(c, open.stack[open.stack.length - 1], s.trump)) {
     send({ type: 'beat', card: c });
+    afterSend(c, document.querySelector(`[data-id="wrap-${c}"]`), document.querySelector('#pairs .pair.open'));
   }
 }
 
@@ -664,7 +737,10 @@ function tryTransfer() {
   }
   if (!card) { toast('You need a card of the same rank to transfer', true); return; }
   state.selected = null;
+  document.querySelectorAll('.hcard.lifted').forEach(e => e.classList.remove('lifted'));
+  updateBeatable();
   send({ type: 'transfer', card });
+  afterSend(card, document.querySelector(`[data-id="wrap-${card}"]`), document.querySelector('#pairs .pair.open'));
 }
 
 function wireButtons() {
@@ -695,10 +771,21 @@ function wireButtons() {
     const idx = +pairEl.dataset.idx;
     const target = s.table[idx];
     if (!target || !target.open || !beatsCard(state.selected, target.stack[target.stack.length - 1], s.trump)) {
+      // rifiuto chiaro: la coppia trema, la selezione si annulla
+      pairEl.classList.add('shake');
+      setTimeout(() => pairEl.classList.remove('shake'), 420);
+      state.selected = null;
+      document.querySelectorAll('.hcard.lifted').forEach(el2 => el2.classList.remove('lifted'));
+      updateBeatable();
       toast("That card doesn't beat that attack", true);
       return;
     }
-    send({ type: 'beat', card: state.selected, target: idx });
+    const sel = state.selected;
+    send({ type: 'beat', card: sel, target: idx });
+    afterSend(sel, document.querySelector(`[data-id="wrap-${sel}"]`), pairEl);
+    state.selected = null;
+    document.querySelectorAll('.hcard.lifted').forEach(el2 => el2.classList.remove('lifted'));
+    updateBeatable();
   });
 }
 
