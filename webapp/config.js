@@ -6,4 +6,4 @@
    l'URL stabile, es. wss://durak-backend.onrender.com).
    Un parametro ?ws=... nell'URL ha la precedenza su questa impostazione.
 */
-window.DURAK_CONFIG = { wsUrl: "wss://couple-glenn-shortly-decision.trycloudflare.com" };
+window.DURAK_CONFIG = { wsUrl: "wss://publisher-mod-researcher-neural.trycloudflare.com" };
