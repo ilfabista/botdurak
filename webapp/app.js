@@ -420,7 +420,7 @@ function renderPairs(s) {
     // Le coppie completate RESTANO al centro finché il giro non si chiude.
     const n = p.stack.length;
     pair.style.width = ((n - 1) * step + pw + (p.defense ? 34 : 0)) + 'px';
-    pair.style.height = (ph + 26) + 'px';   // spazio per la risposta sollevata
+    pair.style.height = (ph + 38) + 'px';   // spazio per la risposta sollevata
     p.stack.forEach((card, si) => {
       const pc = document.createElement('div');
       // l'attacco APERTO (l'ultimo dello stack) è uno slot preciso: bordo
@@ -435,8 +435,8 @@ function renderPairs(s) {
       const pc = document.createElement('div');
       pc.className = 'pc def';
       pc.dataset.id = 'c-' + p.defense;
-      pc.style.left = ((n - 1) * step + 6) + 'px';
-      pc.style.top = '-16px';
+      pc.style.left = ((n - 1) * step + 3) + 'px';
+      pc.style.top = '-30px';
       pc.innerHTML = Cards.face(p.defense, suitOf(p.defense) === s.trump);
       pair.appendChild(pc);
     }
@@ -596,7 +596,12 @@ function resolvePlay(c, wrap, targetIdx) {
     // a destra): il target è l'indice della coppia sotto il dito
     if (targetIdx != null) {
       const pair = s.table[targetIdx];
-      if (pair && pair.open && beatsCard(c, pair.stack[pair.stack.length - 1], s.trump)) {
+      if (pair && !pair.open) {
+        toast('That attack is already beaten', true);
+        shakeWrap(wrap);
+        return false;
+      }
+      if (pair && beatsCard(c, pair.stack[pair.stack.length - 1], s.trump)) {
         send({ type: 'beat', card: c, target: targetIdx });
         return true;
       }
@@ -781,13 +786,28 @@ function wireButtons() {
     const pairEl = e.target.closest('.pair');
     const s = state.s;
     if (!pairEl || !s || s.phase !== 'defend' || s.defender !== s.viewer) return;
-    if (!pairEl.classList.contains('open')) return;
+    if (!pairEl.classList.contains('open')) {
+      // coppia GIÀ battuta: feedback chiaro (senza selezione non è un errore)
+      if (state.selected) {
+        toast('That attack is already beaten', true);
+        pairEl.classList.add('shake');
+        setTimeout(() => pairEl.classList.remove('shake'), 420);
+      }
+      return;
+    }
     if (!state.selected) { toast('Select a card to beat with'); return; }
     // la coppia cliccata è il TARGET (non la prima aperta): con due attacchi
     // sul tavolo il giocatore decide quale battere (es. quello a destra)
     const idx = +pairEl.dataset.idx;
     const target = s.table[idx];
-    if (!target || !target.open || !beatsCard(state.selected, target.stack[target.stack.length - 1], s.trump)) {
+    if (!target || !target.open) {
+      // la coppia è GIÀ stata battuta: messaggio chiaro, selezione intatta
+      toast('That attack is already beaten', true);
+      pairEl.classList.add('shake');
+      setTimeout(() => pairEl.classList.remove('shake'), 420);
+      return;
+    }
+    if (!beatsCard(state.selected, target.stack[target.stack.length - 1], s.trump)) {
       // rifiuto chiaro: la coppia trema, la selezione si annulla
       pairEl.classList.add('shake');
       setTimeout(() => pairEl.classList.remove('shake'), 420);
