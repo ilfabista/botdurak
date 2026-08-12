@@ -111,6 +111,14 @@ async def make_app() -> web.Application:
     return app
 
 
+async def _webhook(request: web.Request, bot_app, Update):
+    """Endpoint POST chiamato da Telegram: ogni richiesta è un update JSON."""
+    data = await request.json()
+    update = Update.de_json(data, bot_app.bot)
+    await bot_app.process_update(update)
+    return web.Response(status=200)
+
+
 def main() -> None:
     import asyncio as _asyncio
 
@@ -127,9 +135,24 @@ def main() -> None:
             from bot.main import build_bot
             bot_app = build_bot(token, webapp_url, app["manager"])
             await bot_app.initialize()
-            await bot_app.updater.start_polling()
-            await bot_app.start()
-            print(f"[bot] polling attivo con token {token[:8]}…")
+            # webhook (produzione su Render): Telegram chiama POST /webhook —
+            # niente polling, niente conflitti, e il servizio si risveglia da
+            # solo quando arriva un messaggio. RENDER_EXTERNAL_URL è iniettata
+            # da Render; in locale si usa WEBHOOK_URL o si ripiega sul polling.
+            webhook_url = os.environ.get("WEBHOOK_URL", "").rstrip("/")
+            if not webhook_url:
+                webhook_url = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+            if webhook_url:
+                from telegram import Update
+                url = webhook_url + "/webhook"
+                await bot_app.bot.set_webhook(url)
+                app.router.add_post("/webhook", lambda r: _webhook(r, bot_app, Update))
+                await bot_app.start()
+                print(f"[bot] webhook attivo su {url}")
+            else:
+                await bot_app.updater.start_polling()
+                await bot_app.start()
+                print(f"[bot] polling attivo con token {token[:8]}…")
         else:
             print("[bot] BOT_TOKEN assente: solo server web (demo: "
                   "http://localhost:8765/play?demo=1)")
