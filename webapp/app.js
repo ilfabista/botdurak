@@ -856,6 +856,19 @@ function eventToasts(s) {
         ? 'Transfer! The attack goes back to «' + s.opp_name + '»'
         : '«' + s.opp_name + '» transferred the attack: your turn to defend');
       break;
+    case 'beat': {
+      // difesa nuova (non presente prima): se è una briscola lo si dice
+      // esplicitamente — un 9 di picche che batte un 9 di cuori è una
+      // DIFESA, non un attacco: niente da rispondere
+      const fresh = s.table.find(p => p.defense
+        && !(prev.table || []).some(q => q.defense === p.defense));
+      if (fresh && suitOf(fresh.defense) === s.trump) {
+        toast(s.defender === s.viewer
+          ? 'You beat with a trump!'
+          : '«' + s.opp_name + '» beat with a trump!');
+      }
+      break;
+    }
   }
 }
 
