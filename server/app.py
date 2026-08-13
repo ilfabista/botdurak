@@ -150,9 +150,19 @@ def main() -> None:
                 await bot_app.start()
                 print(f"[bot] webhook attivo su {url}")
             else:
-                await bot_app.updater.start_polling()
-                await bot_app.start()
-                print(f"[bot] polling attivo con token {token[:8]}…")
+                # fallback locale: MAI sabotare un webhook di produzione —
+                # avviare il polling con un webhook attivo lo RIMUOVE e il
+                # bot di produzione diventa sordo (capitato il 12/08)
+                wh = await bot_app.bot.get_webhook_info()
+                if wh.url:
+                    print(f"[bot] webhook attivo su {wh.url}: "
+                          "bot locale disabilitato")
+                    await bot_app.shutdown()
+                    bot_app = None
+                else:
+                    await bot_app.updater.start_polling()
+                    await bot_app.start()
+                    print(f"[bot] polling attivo con token {token[:8]}…")
         else:
             print("[bot] BOT_TOKEN assente: solo server web (demo: "
                   "http://localhost:8765/play?demo=1)")
