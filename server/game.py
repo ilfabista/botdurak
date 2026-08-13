@@ -1,20 +1,28 @@
 # -*- coding: utf-8 -*-
-"""Logica pura del Durak переводной (perevodnoy) 1v1 — nessuna dipendenza esterna.
+"""Logica pura del Durak переводной (perevodnoy) per 2-6 giocatori — nessuna
+dipendenza esterna.
 
 Regole implementate:
 - Mazzo da 36 (6..A, 4 semi); briscola = seme della carta in fondo al mazzo.
 - 6 carte a testa; attacca chi ha la briscola più bassa (o la carta più bassa).
 - Attacco: giocare una carta scoperta. Difesa: battere (stesso seme più alto,
   o briscola), trasferire (carta dello stesso valore dell'attacco aperto: si
-  posa sopra come se battesse e DIVENTA lei l'attacco da battere; in 1v1
-  l'attacco torna all'avversario, i ruoli si scambiano), o prendere tutto.
-- Dopo una difesa riuscita l'attaccante può "lanciare" solo carte dello stesso
-  valore di carte già sul tavolo, massimo 6 coppie (12 carte), e solo se il
-  difensore ha almeno una carta in mano.
-- Presa: chi prende raccoglie tutto; l'altro attacca il giro dopo.
+  posa accanto e DIVENTA lei l'attacco corrente), o prendere tutto.
+- Con 3+ giocatori (подкидной): dopo una difesa riuscita TUTTI gli altri
+  giocatori, a turno in senso orario a partire dall'attaccante, possono
+  \"lanciare\" carte dello stesso valore di carte già sul tavolo, o passare.
+  Quando tutti hanno passato il giro si chiude. Massimo 6 coppie (12 carte).
+- Trasferimento: l'attacco passa al giocatore SUCCESSIVO in senso orario
+  (con 2 giocatori torna all'attaccante, i ruoli si scambiano).
+- Presa: chi prende raccoglie tutto e NON attacca: attacca il successivo del
+  difensore (con 2 giocatori riattacca l'attaccante).
 - Giro pulito: chi ha difeso attacca il giro dopo.
-- Quando il mazzo è finito, a fine giro vince chi non ha carte (se entrambi
-  hanno carte si continua; entrambi a zero = pareggio, rarissimo).
+- Quando il mazzo è finito, a fine giro chi resta senza carte esce dal gioco
+  (ha vinto); quando resta un solo giocatore con carte, è il \"durak\" e la
+  partita finisce. Con 2 giocatori: chi finisce le carte vince.
+- Varianti переводной: niente trasferimento nel primo giro; non si può
+  trasferire se una carta dell'attacco è già stata battuta; non si può
+  trasferire a chi non ha carte.
 """
 from __future__ import annotations
 
@@ -27,6 +35,7 @@ RANKS = ["6", "7", "8", "9", "T", "J", "Q", "K", "A"]
 RANK_ORDER = {r: i for i, r in enumerate(RANKS)}
 MAX_PAIRS = 6           # massimo coppie attacco/risposta sul tavolo
 HAND_SIZE = 6
+MAX_PLAYERS = 6         # 36 carte / 6 a testa
 
 
 def make_deck() -> list[str]:
@@ -55,48 +64,64 @@ def lowest_card(hand: list[str], trump: str) -> str:
 
 
 class Game:
-    """Partita di Durak переводной a 2 giocatori. Nessuna logica di rete.
+    """Partita di Durak переводной a 2-6 giocatori. Nessuna logica di rete.
 
     Convenzioni:
-    - `players` = [0, 1]; `attacker`/`defender` indicano i ruoli correnti
-      (si scambiano a ogni trasferimento).
+    - `players` = [0 .. n_players-1] in senso orario; `attacker`/`defender`
+      indicano i ruoli correnti (il trasferimento sposta l'attacco sul
+      giocatore successivo; con 2 giocatori i ruoli si scambiano).
     - `table` = lista di coppie {stack, defense, open, next_to, order}:
       `stack` = pila di carte stesso-valore (la prima è l'attacco originale,
-      le successive sono trasferimenti); la carta in cima alla pila è
-      l'attacco aperto da battere; `defense` = carta di risposta (chiude);
-      `open` = True finché la coppia ha un attacco senza risposta.
-      `next_to`/`order` servono solo al layout del client.
+      le successive sono trasferimenti); ogni carta dello stack è un attacco
+      SEPARATO da battere (regola reale); `defense` = carta di risposta
+      (chiude la coppia); `open` = True finché la coppia ha un attacco senza
+      risposta. `next_to`/`order` servono solo al layout del client.
     - `phase`: "attack" (deve giocare l'attaccante), "defend" (deve rispondere
-      il difensore), "throw_in" (l'attaccante può lanciare o passare),
-      "over" (partita finita).
-    - `winner`: indice del vincitore, -1 per pareggio, None se in corso.
+      il difensore), "throw_in" (i giocatori lanciano o passano a turno,
+      `thrower` = chi sta lanciando ora), "over" (partita finita).
+    - `winner`: indice dell'ultimo giocatore uscito (vincitore), -1 pareggio,
+      None se in corso; `out`: giocatori usciti (mani vuote, mazzo finito).
     """
 
-    def __init__(self, seed: Optional[int] = None, first_attacker: Optional[int] = None):
+    def __init__(self, seed: Optional[int] = None, n_players: int = 2,
+                 first_attacker: Optional[int] = None):
+        if not (2 <= n_players <= MAX_PLAYERS):
+            raise ValueError("players must be between 2 and 6")
+        self.n_players = n_players
         self.rng = random.Random(seed)
         self.deck = make_deck()
         self.rng.shuffle(self.deck)
         # La briscola è il seme della carta in fondo al mazzo (l'ultima pescata).
         self.trump = self.deck[-1][1]
-        self.hands: list[list[str]] = [[], []]
+        self.hands: list[list[str]] = [[] for _ in range(n_players)]
         for _ in range(HAND_SIZE):
-            for p in (0, 1):
+            for p in range(n_players):
                 self.hands[p].append(self.deck.pop(0))
         self.table: list[dict] = []
         self.discard: list[str] = []          # carte battute fuori dal gioco
         self.phase = "attack"
-        self.winner: Optional[int] = None     # 0/1 vincitore, -1 pareggio
+        self.winner: Optional[int] = None     # vincitore / -1 pareggio
+        self.out: list[int] = []              # giocatori usciti (mani vuote)
         self.last_action: str = ""            # per toast/client
         self.first_round = True               # regola переводной: niente transfer al primo giro
+        self.thrower: Optional[int] = None    # in throw_in: chi sta lanciando
+        self.pass_count = 0                   # pass consecutivi nel giro di lancio
         self._order_counter = 0
 
         if first_attacker is None:
             self.attacker = self._first_attacker()
         else:
             self.attacker = first_attacker
-        self.defender = 1 - self.attacker
+        self.defender = self._next(self.attacker)
 
     # ------------------------------------------------------------- helpers
+
+    def _next(self, p: int) -> int:
+        """Giocatore successivo in senso orario (salta chi è uscito)."""
+        nxt = (p + 1) % self.n_players
+        while nxt in self.out and nxt != p:
+            nxt = (nxt + 1) % self.n_players
+        return nxt
 
     def _first_attacker(self) -> int:
         def key(p: int) -> tuple:
@@ -104,7 +129,7 @@ class Game:
             if trumps:
                 return (0, RANK_ORDER[rank(min(trumps, key=lambda c: RANK_ORDER[rank(c)]))])
             return (1, min(RANK_ORDER[rank(c)] for c in self.hands[p]))
-        return 0 if key(0) <= key(1) else 1
+        return min(range(self.n_players), key=key)
 
     def table_cards(self) -> list[str]:
         out = []
@@ -126,7 +151,7 @@ class Game:
         return None
 
     def open_card(self) -> Optional[str]:
-        """Carta che il difensore deve battere (cima della pila aperta)."""
+        """Carta che il difensore deve battere (prima coppia aperta)."""
         pair = self.open_pair()
         return pair["stack"][-1] if pair else None
 
@@ -137,11 +162,12 @@ class Game:
     def can_transfer(self, player: int) -> bool:
         """Regole reali del переводной: il trasferimento è permesso solo se
         il difensore non ha ancora battuto NESSUNA carta dell'attacco, se il
-        giocatore che riceverebbe l'attacco ha carte in mano, se c'è spazio
-        sul tavolo e — variante più diffusa — MAI nel primo giro."""
+        giocatore che riceverebbe l'attacco (il SUCCESSIVO in senso orario)
+        ha carte in mano, se c'è spazio sul tavolo e — variante più diffusa —
+        MAI nel primo giro."""
         if self.phase != "defend" or player != self.defender:
             return False
-        if not self.hands[1 - player]:
+        if not self.hands[self._next(player)]:
             return False                       # niente transfer a mani vuote
         if len(self.table_cards()) >= MAX_PAIRS * 2 - 1:
             return False                       # tavolo pieno
@@ -173,8 +199,9 @@ class Game:
         return self.phase == "defend" and player == self.defender and bool(self.table)
 
     def can_pass(self, player: int) -> bool:
-        if self.phase == "throw_in" and player == self.attacker:
-            return True
+        if self.phase == "throw_in":
+            # passano a turno i lanciatori (mai il difensore)
+            return player == self.thrower
         # in attack: chiudere un attacco multi-carta (premere «Fatto»)
         return self.phase == "attack" and player == self.attacker and bool(self.table)
 
@@ -210,10 +237,12 @@ class Game:
         già presente sul tavolo (attacchi o risposte dell'avversario).
         Ogni carta è un attacco SEPARATO (coppia propria, affiancata) che
         il difensore deve battere singolarmente; se non batte tutto, prende.
-        """
+        In throw_in può lanciare SOLO il lanciatore corrente (`thrower`)."""
         if self.phase not in ("attack", "throw_in"):
             raise ValueError("not the moment to attack")
-        if player != self.attacker:
+        if self.phase == "throw_in" and player != self.thrower:
+            raise ValueError("not your turn to throw")
+        if self.phase == "attack" and player != self.attacker:
             raise ValueError("not your turn to attack")
         if card not in self.hands[player]:
             raise ValueError("card not in hand")
@@ -253,10 +282,10 @@ class Game:
         """Risposta: battere un attacco aperto con una carta valida.
 
         `target` è l'indice della coppia da battere (usato dal giocatore
-        quando ci sono più attacchi aperti, es. apertura multi-carta); se
-        omesso, si batte la prima coppia aperta che la carta batte.
-        Con più attacchi aperti la fase resta 'defend' finché non sono
-        battuti tutti."""
+        quando ci sono più attacchi aperti, es. apertura multi-carta o
+        trasferimenti); se omesso, si batte la prima coppia aperta che la
+        carta batte. Con più attacchi aperti la fase resta 'defend' finché
+        non sono battuti tutti."""
         if self.phase != "defend" or player != self.defender:
             raise ValueError("not your turn to defend")
         if card not in self.hands[player]:
@@ -282,14 +311,18 @@ class Game:
         pair["open"] = False
         self.last_action = "beat"
         if self.open_pair() is None:
+            # tutto battuto: il giro dei lanci riparte dall'attaccante
             self.phase = "throw_in"
+            self.thrower = self.attacker
+            self.pass_count = 0
 
     def transfer(self, player: int, card: str) -> None:
         """Trasferimento (перевод): carta dello stesso valore dell'attacco
         corrente. La carta va ACCANTO all'attacco — diventa lei l'attacco
         aperto e, come nel gioco reale, il nuovo difensore dovrà battere
         TUTTE le carte del gruppo, una per una (ognuna è una coppia propria).
-        In 1v1 l'attacco torna all'avversario: i ruoli si scambiano."""
+        L'attacco passa al giocatore SUCCESSIVO in senso orario (con 2
+        giocatori torna all'attaccante, i ruoli si scambiano)."""
         if self.phase != "defend" or player != self.defender:
             raise ValueError("not your turn to defend")
         if card not in self.hands[player]:
@@ -304,31 +337,52 @@ class Game:
         self._remove(player, card)
         self._add_pair(card, next_to=idx)     # nuova coppia accanto all'attacco
         self.last_action = "transfer"
-        # i ruoli si scambiano: chi ha trasferito è al sicuro, l'ex-attaccante
-        # ora deve difendere tutte le carte del gruppo
-        self.attacker, self.defender = self.defender, self.attacker
+        # chi ha trasferito è al sicuro e diventa l'attaccante del giro;
+        # l'attacco passa al giocatore successivo
+        self.attacker = player
+        self.defender = self._next(player)
 
     def take(self, player: int) -> None:
-        """Il difensore si arrende e prende tutte le carte del tavolo."""
+        """Il difensore si arrende e prende tutte le carte del tavolo.
+        Chi prende NON attacca: attacca il giocatore successivo al difensore
+        (con 2 giocatori riattacca l'attaccante di prima)."""
         if not self.can_take(player):
             raise ValueError("you cannot take now")
         self.hands[player].extend(self.table_cards())
         self.table.clear()
         self._order_counter = 0
         self.last_action = "take"
-        # chi prende non cambia ruolo: l'attaccante attacca di nuovo
+        self.attacker = self._next(player)
+        self.defender = self._next(self.attacker)
+        self.thrower = None
+        self.pass_count = 0
         self._resolve_round()
 
     def pass_turn(self, player: int) -> None:
         """In attack: chiude l'attacco multi-carta (tocca al difensore).
-        In throw_in: tavolo pulito, le carte battute finiscono nello scarto e
-        il difensore diventa attaccante."""
+        In throw_in: il lanciatore corrente passa; quando tutti gli altri
+        hanno passato, tavolo pulito e il difensore attacca il successivo."""
         if not self.can_pass(player):
             raise ValueError("you cannot pass now")
         if self.phase == "attack":
             self.last_action = "close_attack"
             self.phase = "defend"
             return
+        # throw_in: il turno di lancio passa al successivo in senso orario
+        # (saltando il difensore); il giro si chiude quando TUTTI gli altri
+        # giocatori hanno passato consecutivamente
+        self.pass_count += 1
+        if self.pass_count >= self.n_players - 1:
+            self.thrower = None
+            self.pass_count = 0
+        else:
+            nxt = self._next(self.thrower)
+            if nxt == self.defender:
+                nxt = self._next(nxt)
+            self.thrower = nxt
+            self.last_action = "pass"
+            return
+        # tutti gli altri hanno passato: giro chiuso
         for pair in self.table:
             self.discard.extend(pair["stack"])
             if pair["defense"]:
@@ -336,32 +390,46 @@ class Game:
         self.table.clear()
         self._order_counter = 0
         self.last_action = "clear"
-        self.attacker, self.defender = self.defender, self.attacker
+        self.attacker = self.defender           # chi si è difeso attacca
+        self.defender = self._next(self.attacker)
+        self.thrower = None
         self._resolve_round()
 
     # ------------------------------------------------------------- giro
 
     def _resolve_round(self) -> None:
-        """Pescata fino a 6 e controllo vittoria (solo qui si vince)."""
+        """Pescata fino a 6 e controllo vittoria (solo qui si vince).
+        Si pesca in ordine di giro: dall'attaccante in senso orario fino
+        al difensore (regola reale del durak)."""
         self.first_round = False              # il primo giro è finito
-        for p in (self.attacker, self.defender):
+        p = self.attacker
+        for _ in range(self.n_players):
             while self.deck and len(self.hands[p]) < HAND_SIZE:
                 self.hands[p].append(self.deck.pop(0))
+            p = self._next(p)
         self.phase = "attack"
         if self.winner is None and not self.deck:
-            if not self.hands[self.attacker] and not self.hands[self.defender]:
-                self.winner = -1               # pareggio (raro)
-            elif not self.hands[self.attacker]:
-                self.winner = self.attacker
-            elif not self.hands[self.defender]:
-                self.winner = self.defender
-            if self.winner is not None:
+            active = [p for p in range(self.n_players) if self.hands[p]]
+            for p in range(self.n_players):
+                if p not in self.out and not self.hands[p]:
+                    self.out.append(p)
+            if len(active) == 0:
+                self.winner = -1               # pareggio totale (raro)
                 self.phase = "over"
+            elif len(active) == 1:
+                # resta un solo giocatore con carte: è il durak
+                self.winner = self.out[-1] if self.out else -1
+                self.phase = "over"
+            elif self.attacker in self.out:
+                # chi doveva attaccare è uscito: il giro salta gli usciti
+                self.attacker = self._next(self.attacker)
+                self.defender = self._next(self.attacker)
 
     # ------------------------------------------------------------- vista
 
     def public_state(self, viewer: int) -> dict:
-        """Stato da inviare a `viewer`: la mano dell'avversario è nascosta."""
+        """Stato da inviare a `viewer`: le mani altrui sono nascoste
+        (solo il conteggio in `hand_sizes`)."""
         my_hand = sorted(self.hands[viewer], key=lambda c: (RANK_ORDER[rank(c)], c))
         return {
             "trump": self.trump,
@@ -370,10 +438,15 @@ class Game:
             # in su) finché non viene pescata
             "trump_card": self.deck[-1] if self.deck else None,
             "hand": my_hand,
-            "opp_count": len(self.hands[1 - viewer]),
+            "opp_count": len(self.hands[1 - viewer]) if self.n_players == 2 else 0,
+            "hand_sizes": [len(h) for h in self.hands],
             "table": [dict(p) for p in self._sorted_table()],
             "attacker": self.attacker,
             "defender": self.defender,
+            "thrower": self.thrower,
+            "pass_count": self.pass_count,
+            "n_players": self.n_players,
+            "out": list(self.out),
             "viewer": viewer,
             "phase": self.phase,
             "can_take": self.can_take(viewer),

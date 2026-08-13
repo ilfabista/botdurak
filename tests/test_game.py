@@ -347,6 +347,88 @@ def test_non_si_attacca_difensore_senza_carte():
     assert "7H" not in g.hands[1]           # la 7H è finita nello scarto
 
 
+# ------------------------------------------------------------- multi-giocatore (3+)
+
+def game3(hands, deck, trump, attacker=0):
+    """Partita a 3 giocatori costruita a mano."""
+    g = Game(seed=1, n_players=3)
+    g.hands = [list(h) for h in hands]
+    g.deck = list(deck)
+    g.trump = trump
+    g.attacker = attacker
+    g.defender = g._next(attacker)
+    g.table = []
+    g.phase = "attack"
+    g.winner = None
+    g.first_round = False
+    return g
+
+
+def test_tre_giocatori_transfer_al_successivo():
+    """Con 3 giocatori il trasferimento passa al SUCCESSIVO in senso orario
+    (non torna all'attaccante): 0 attacca, 1 trasferisce -> difende 2."""
+    g = game3([["6H", "9H"], ["6D", "8C"], ["7H", "7D"]], [], "S", attacker=0)
+    g.play_attack(0, "6H")
+    assert g.transfer_ranks(1) == ["6"]
+    g.transfer(1, "6D")
+    assert g.attacker == 1 and g.defender == 2      # l'attacco va a 2, non a 0
+    assert g.open_card() == "6H"
+    g.play_defense(2, "7H", 0)                      # 2 batte il 6H
+    assert g.phase == "defend"                      # il 6D trasferito resta
+    g.play_defense(2, "7D", 1)                      # 2 batte anche il 6D
+    assert g.phase == "throw_in" and g.thrower == 1  # il giro dei lanci parte da 1
+
+
+def test_tre_giocatori_giro_di_lancio():
+    """Подкидной a 3: dopo la difesa, l'attaccante lancia per primo, poi il
+    terzo giocatore; il difensore non lancia mai. Clear solo dopo che TUTTI
+    gli altri hanno passato."""
+    g = game3([["6H", "9H"], ["7H", "7C", "8C"], ["6C", "TS"]], [], "S", attacker=0)
+    g.play_attack(0, "6H")
+    g.play_defense(1, "7H", 0)
+    assert g.phase == "throw_in" and g.thrower == 0
+    assert not g.can_pass(1)                        # il difensore non passa
+    g.pass_turn(0)                                  # 0 passa
+    assert g.phase == "throw_in" and g.thrower == 2  # tocca al terzo, non al difensore
+    g.play_attack(2, "6C")                          # 2 lancia un 6
+    assert g.phase == "defend"
+    g.play_defense(1, "7C", 1)                      # 1 batte il 6C
+    assert g.phase == "throw_in" and g.thrower == 0  # il giro riparte dall'attaccante
+    g.pass_turn(0)
+    g.pass_turn(2)                                  # tutti hanno passato
+    assert g.phase == "attack"                      # giro chiuso
+    assert g.attacker == 1 and g.defender == 2      # chi si è difeso attacca
+
+
+def test_tre_giocatori_take_attacca_il_successivo():
+    """Chi prende non attacca: con 3 giocatori attacca il successivo del
+    difensore."""
+    g = game3([["6H", "9H"], ["6D", "8C"], ["7C", "TS"]], [], "S", attacker=0)
+    g.play_attack(0, "6H")
+    g.take(1)                                       # 1 prende tutto
+    assert g.attacker == 2 and g.defender == 0      # attacca 2 (dopo 1), non 0
+
+
+def test_tre_giocatori_fine_partita_durak():
+    """Mazzo finito: chi resta senza carte esce; quando resta un solo
+    giocatore con carte, è il durak e la partita finisce."""
+    g = game3([["6H", "9H"], ["7H"], ["7C", "TS"]], [], "S", attacker=0)
+    g.play_attack(0, "6H")
+    g.play_defense(1, "7H", 0)                  # 1 resta senza carte (mazzo vuoto)
+    g.pass_turn(0)                              # 0 passa
+    g.pass_turn(2)                              # anche 2 passa: giro chiuso, 1 è uscito
+    assert 1 in g.out                           # uscito (vincitore parziale)
+    assert g.winner is None                     # la partita continua
+    assert g.phase == "attack"
+    assert g.attacker == 2 and g.defender == 0  # il giro salta l'uscito 1
+    g.play_attack(2, "7C")
+    g.take(0)                                   # 0 non può battere: prende
+    assert g.attacker == 2 and g.defender == 0  # ancora 2 attacca 0
+    g.play_attack(2, "TS")
+    g.take(0)                                   # 0 prende e resta l'unico con carte
+    assert g.winner == 2 and g.phase == "over"  # 0 è il durak (2 uscito per ultimo)
+
+
 # ------------------------------------------------------------- fine partita
 
 def test_vittoria_dopo_presa_finale():
