@@ -87,6 +87,7 @@ class Game:
         self.phase = "attack"
         self.winner: Optional[int] = None     # 0/1 vincitore, -1 pareggio
         self.last_action: str = ""            # per toast/client
+        self.first_round = True               # regola переводной: niente transfer al primo giro
         self._order_counter = 0
 
         if first_attacker is None:
@@ -133,23 +134,40 @@ class Game:
         """Valori di TUTTE le carte sul tavolo (per il lancio/attacco)."""
         return {rank(c) for c in self.table_cards()}
 
-    def transfer_ranks(self, player: int) -> list[str]:
-        """Valori che `player` può usare per trasferire l'attacco aperto.
-        Solo con UN attacco aperto; MAI se l'avversario (che riceverebbe
-        l'attacco) non ha carte in mano — non può difendere, e con il mazzo
-        finito il trasferimento diventerebbe un ciclo infinito."""
+    def can_transfer(self, player: int) -> bool:
+        """Regole reali del переводной: il trasferimento è permesso solo se
+        il difensore non ha ancora battuto NESSUNA carta dell'attacco, se il
+        giocatore che riceverebbe l'attacco ha carte in mano, se c'è spazio
+        sul tavolo e — variante più diffusa — MAI nel primo giro."""
         if self.phase != "defend" or player != self.defender:
-            return []
-        if len(self.open_pairs()) != 1:
-            return []
+            return False
         if not self.hands[1 - player]:
-            return []
+            return False                       # niente transfer a mani vuote
         if len(self.table_cards()) >= MAX_PAIRS * 2 - 1:
-            return []                       # tavolo pieno: niente spazio per la risposta
-        open_rank = rank(self.open_card()) if self.open_card() else None
-        if open_rank is None:
+            return False                       # tavolo pieno
+        if self.first_round:
+            return False                       # primo giro: vietato
+        open_pairs = self.open_pairs()
+        if not open_pairs:
+            return False
+        # tutte le carte aperte devono avere lo stesso valore (un solo
+        # attacco "in corso") e NESSUNA carta dello stesso valore deve
+        # essere già stata battuta — chi ha iniziato a difendere non può
+        # più trasferire
+        r = rank(open_pairs[0]["stack"][-1])
+        if any(rank(p["stack"][-1]) != r for p in open_pairs):
+            return False
+        if any(rank(p["stack"][-1]) == r and not p["open"] for p in self.table):
+            return False
+        return True
+
+    def transfer_ranks(self, player: int) -> list[str]:
+        """Valori che `player` può usare per trasferire l'attacco corrente
+        (l'ultima carta aperta). Vuoto se il trasferimento non è permesso."""
+        if not self.can_transfer(player):
             return []
-        return [open_rank] if any(rank(c) == open_rank for c in self.hands[player]) else []
+        r = rank(self.open_pairs()[-1]["stack"][-1])   # l'attacco corrente
+        return [r] if any(rank(c) == r for c in self.hands[player]) else []
 
     def can_take(self, player: int) -> bool:
         return self.phase == "defend" and player == self.defender and bool(self.table)
@@ -268,30 +286,26 @@ class Game:
 
     def transfer(self, player: int, card: str) -> None:
         """Trasferimento (перевод): carta dello stesso valore dell'attacco
-        aperto. Si posa sulla pila come se la battesse e diventa lei l'attacco
-        da battere. In 1v1 l'attacco torna all'avversario: i ruoli si scambiano
-        e l'ex-attaccante deve difendere l'attacco trasferito."""
+        corrente. La carta va ACCANTO all'attacco — diventa lei l'attacco
+        aperto e, come nel gioco reale, il nuovo difensore dovrà battere
+        TUTTE le carte del gruppo, una per una (ognuna è una coppia propria).
+        In 1v1 l'attacco torna all'avversario: i ruoli si scambiano."""
         if self.phase != "defend" or player != self.defender:
             raise ValueError("not your turn to defend")
         if card not in self.hands[player]:
             raise ValueError("card not in hand")
-        if len(self.open_pairs()) != 1:
-            raise ValueError("you can only transfer with a single open attack")
-        if not self.hands[1 - player]:
-            raise ValueError("your opponent has no cards: you cannot transfer")
-        pair = self.open_pair()
-        if pair is None:
-            raise ValueError("no open attack")
-        if rank(card) != rank(pair["stack"][-1]):
+        if not self.can_transfer(player):
+            raise ValueError("you cannot transfer now")
+        if rank(card) not in self.transfer_ranks(player):
             raise ValueError("the card must match the attack rank")
-        if len(self.table_cards()) >= MAX_PAIRS * 2 - 1:
-            raise ValueError("table full")
-
+        # l'attacco corrente è l'ULTIMA carta aperta (l'ultimo trasferimento)
+        pair = self.open_pairs()[-1]
+        idx = next(i for i, p in enumerate(self._sorted_table()) if p is pair)
         self._remove(player, card)
-        pair["stack"].append(card)            # la carta nuova è l'attacco aperto
+        self._add_pair(card, next_to=idx)     # nuova coppia accanto all'attacco
         self.last_action = "transfer"
         # i ruoli si scambiano: chi ha trasferito è al sicuro, l'ex-attaccante
-        # ora deve difendere la carta trasferita
+        # ora deve difendere tutte le carte del gruppo
         self.attacker, self.defender = self.defender, self.attacker
 
     def take(self, player: int) -> None:
@@ -329,6 +343,7 @@ class Game:
 
     def _resolve_round(self) -> None:
         """Pescata fino a 6 e controllo vittoria (solo qui si vince)."""
+        self.first_round = False              # il primo giro è finito
         for p in (self.attacker, self.defender):
             while self.deck and len(self.hands[p]) < HAND_SIZE:
                 self.hands[p].append(self.deck.pop(0))

@@ -24,6 +24,7 @@ def game_with(hands0, hands1, deck, trump, attacker=0):
     g.table = []
     g.phase = "attack"
     g.winner = None
+    g.first_round = False        # i test del transfer giocano "dopo il primo giro"
     return g
 
 
@@ -100,17 +101,20 @@ def test_attacco_fuori_turno_rifiutato():
 # ------------------------------------------------------------- trasferimento
 
 def test_trasferimento_scambia_i_ruoli():
-    g = game_with(["6H", "9D"], ["6D", "7D"], [], "S", attacker=0)
+    g = game_with(["6H", "9D", "9H"], ["6D", "7D"], [], "S", attacker=0)
     g.play_attack(0, "6H")                  # 0 attacca con 6H
     assert g.transfer_ranks(1) == ["6"]     # il difensore ha un 6
     g.transfer(1, "6D")                     # trasferisce: l'attacco torna a 0
     assert g.attacker == 1 and g.defender == 0
-    assert g.open_card() == "6D"            # ora va battuta la carta trasferita
-    assert g.table[0]["stack"] == ["6H", "6D"]
+    assert g.open_card() == "6H"            # la prima carta del gruppo da battere
+    # regola reale: ogni carta trasferita è una coppia propria da battere
+    assert [p["stack"] for p in g.table] == [["6H"], ["6D"]]
     # l'ex-attaccante ora difende
     with pytest.raises(ValueError):
         g.play_attack(0, "9D")
-    g.play_defense(0, "9D")                 # batte la 6D trasferita
+    g.play_defense(0, "9H", 0)              # batte il 6H
+    assert g.phase == "defend"              # il 6D trasferito resta da battere
+    g.play_defense(0, "9D", 1)              # batte anche il 6D
     assert g.phase == "throw_in"
     assert g.attacker == 1                  # chi ha trasferito ora lancia
 
@@ -123,8 +127,8 @@ def test_catena_di_trasferimenti():
     assert g.attacker == 1 and g.defender == 0
     g.transfer(0, "6S")                     # 0 risponde trasferendo di nuovo
     assert g.attacker == 0 and g.defender == 1
-    assert g.table[0]["stack"] == ["6H", "6D", "6S"]
-    assert g.open_card() == "6S"
+    assert [p["stack"] for p in g.table] == [["6H"], ["6D"], ["6S"]]
+    assert g.open_card() == "6H"            # tutte e tre le carte sono aperte
     # la catena si ferma quando chi riceverebbe l'attacco non ha carte:
     # 1 ha ancora 6C ma 0 ha la mano vuota → trasferimento vietato
     assert g.transfer_ranks(1) == []
@@ -147,6 +151,52 @@ def test_trasferimento_dopo_risposta_non_permesso():
     assert g.phase == "throw_in"
     with pytest.raises(ValueError):
         g.transfer(1, "6D")                 # non è più in difesa
+
+
+def test_regola_reale_stack_battuto_carta_per_carta():
+    """Regola autentica del переводной: dopo il trasferimento l'attacco è
+    composto da TUTTE le carte del gruppo e ognuna va battuta singolarmente
+    (una difesa per carta, non una per coppia)."""
+    g = game_with(["6H", "9H", "7D"], ["6D", "8C"], [], "S", attacker=0)
+    g.play_attack(0, "6H")
+    g.transfer(1, "6D")                     # 1 trasferisce: gruppo [6H, 6D]
+    assert len(g.table) == 2                # due coppie separate, entrambe aperte
+    assert all(p["open"] for p in g.table)
+    g.play_defense(0, "9H", 0)              # batte SOLO il 6H
+    assert g.phase == "defend"              # il 6D resta da battere!
+    assert g.open_card() == "6D"
+    g.play_defense(0, "7D", 1)              # batte anche il 6D
+    assert g.phase == "throw_in"            # solo ora l'attacco è chiuso
+    assert [p["defense"] for p in g.table] == ["9H", "7D"]
+
+
+def test_regola_reale_niente_transfer_primo_giro():
+    """Variante più diffusa: nel PRIMO giro il trasferimento è vietato."""
+    g = game_with(["6H", "9D"], ["6D", "7H", "9S"], [], "S", attacker=0)
+    g.first_round = True                    # partita appena iniziata
+    g.play_attack(0, "6H")
+    assert g.transfer_ranks(1) == []
+    with pytest.raises(ValueError):
+        g.transfer(1, "6D")
+    # dopo il primo giro completato (clear) il trasferimento è permesso
+    g.play_defense(1, "7H")                 # 1 batte
+    g.pass_turn(0)                          # clear (l'attaccante passa): giro finito
+    assert g.first_round is False
+    g.play_attack(1, "9S")                  # chi si è difeso attacca
+    assert g.transfer_ranks(0) == ["9"]     # 0 ha il 9D in mano
+
+
+def test_regola_reale_transfer_vietato_se_una_carta_del_gruppo_battuta():
+    """Chi ha iniziato a difendere non può più trasferire: se una carta del
+    gruppo è già battuta, il trasferimento è vietato."""
+    g = game_with(["6H", "9H", "7D"], ["6D", "6C"], [], "S", attacker=0)
+    g.play_attack(0, "6H")
+    g.transfer(1, "6D")                     # gruppo [6H, 6D]
+    g.play_defense(0, "9H", 0)              # 0 batte il 6H
+    assert g.phase == "defend"              # il 6D è ancora aperto
+    assert g.transfer_ranks(1) == []        # ma trasferire è vietato
+    with pytest.raises(ValueError):
+        g.transfer(1, "6C")
 
 
 # ------------------------------------------------------------- attacco multi-carta
