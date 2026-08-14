@@ -59,8 +59,14 @@ function tableRanks(s) {
 }
 function isMyTurn(s) {
   if (!s || s.phase === 'over') return false;
-  if (s.phase === 'attack' || s.phase === 'throw_in') return s.attacker === s.viewer;
+  if (s.phase === 'attack') return s.attacker === s.viewer;
+  if (s.phase === 'throw_in') return s.thrower === s.viewer;
   return s.defender === s.viewer;
+}
+
+function nameOf(s, idx) {
+  if (s.names && s.names[idx]) return s.names[idx];
+  return idx === s.viewer ? s.my_name : s.opp_name;
 }
 
 /* ============================== WebSocket ============================== */
@@ -78,6 +84,27 @@ function wsUrl() {
 
 function connect() {
   const p = new URLSearchParams(location.search);
+  if (p.get('join')) {
+    // link di invito: ci si unisce alla stanza e si ottiene il proprio token
+    const uid = localStorage.getItem('durak_uid')
+      || (localStorage.setItem('durak_uid', crypto.randomUUID()), localStorage.getItem('durak_uid'));
+    fetch(wsUrl().replace(/^ws/, 'http') + '/api/join', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ m: p.get('m'), uid, name: p.get('name') || 'Player' }),
+    }).then(r => r.json()).then(d => {
+      if (!d.t) { toast('Cannot join this room (full or already started)', true); return; }
+      p.delete('join');
+      p.set('t', d.t);
+      history.replaceState(null, '', location.pathname + '?' + p.toString());
+      openSocket(p);
+    }).catch(() => toast('Cannot join the room: server unreachable', true));
+    return;
+  }
+  openSocket(p);
+}
+
+function openSocket(p) {
   if (!p.get('t')) {
     let t = localStorage.getItem('durak_demo_t');
     if (!t) { t = crypto.randomUUID(); localStorage.setItem('durak_demo_t', t); }
@@ -494,6 +521,35 @@ function renderHand(s) {
   }
 }
 
+function renderPlayers(s) {
+  const strip = $('#players-strip');
+  $('#opp-hand').hidden = !!(s && s.n_players > 2);
+  if (!s || s.n_players <= 2) { strip.hidden = true; return; }
+  strip.hidden = false;
+  strip.innerHTML = '';
+  const thinking = (s.phase === 'over') ? -1
+    : (s.phase === 'attack' ? s.attacker
+       : (s.phase === 'defend' ? s.defender : s.thrower));
+  for (let i = 0; i < s.registered; i++) {
+    if (i === s.viewer) continue;
+    const chip = document.createElement('div');
+    chip.className = 'other-chip' + (i === thinking ? ' active' : '');
+    const name = document.createElement('span');
+    name.className = 'other-name';
+    name.textContent = nameOf(s, i);
+    const count = document.createElement('span');
+    count.className = 'other-count';
+    count.textContent = (s.hand_sizes && s.hand_sizes[i] != null) ? s.hand_sizes[i] : '?';
+    const dots = document.createElement('span');
+    dots.className = 'other-dots';
+    dots.textContent = '•'.repeat(Math.min(6, s.hand_sizes && s.hand_sizes[i] || 0));
+    chip.appendChild(name);
+    chip.appendChild(count);
+    chip.appendChild(dots);
+    strip.appendChild(chip);
+  }
+}
+
 function renderActions(s) {
   const myTurn = isMyTurn(s);
   $('#app').classList.toggle('my-turn', myTurn);
@@ -503,11 +559,15 @@ function renderActions(s) {
   pass.hidden = !s.can_pass;
   // in attack il pulsante chiude l'attacco multi-carta; in throw_in finisce il giro
   pass.textContent = s.phase === 'attack' ? 'Done ✓' : 'Enough';
+  renderPlayers(s);
 
   let status;
   if (s.phase === 'over') status = '';
-  else if (!myTurn) status = `«${s.opp_name}» is thinking…`;
-  else if (s.phase === 'attack') {
+  else if (!myTurn) {
+    const who = s.phase === 'attack' ? s.attacker
+      : (s.phase === 'defend' ? s.defender : s.thrower);
+    status = `«${nameOf(s, who)}» is thinking…`;
+  } else if (s.phase === 'attack') {
     status = s.table.length
       ? 'Your turn: play more cards of the same rank or press «Done»'
       : 'Your turn: pick a card to attack (you can play several of the same rank)';
@@ -530,9 +590,13 @@ function renderOverlay(s) {
   if (!s.started) {
     ov.hidden = false;
     emblem.textContent = '🎴';
-    title.textContent = 'Room created';
+    title.textContent = s.n_players > 2
+      ? `Waiting for players: ${s.registered}/${s.n_players}`
+      : 'Room created';
     title.className = '';
-    sub.textContent = 'Waiting for your opponent…\nThe game starts as soon as they join.';
+    sub.textContent = s.n_players > 2
+      ? 'Share the link to invite the others.\nThe game starts when the room is full.'
+      : 'Waiting for your opponent…\nThe game starts as soon as they join.';
     spinner.hidden = false;
     rematch.hidden = true;
     return;
@@ -542,16 +606,28 @@ function renderOverlay(s) {
   ov.hidden = false;
   spinner.hidden = true;
   rematch.hidden = false;
-  const won = s.winner === s.viewer;
+  const iOut = s.out && s.out.includes(s.viewer);
+  const won = s.winner === s.viewer || (s.n_players > 2 && iOut);
   const drew = s.winner === -1;
   emblem.textContent = won ? '🏆' : drew ? '🤝' : '😅';
-  title.textContent = s.abandoned ? 'Opponent disconnected' : won ? 'You won!' : drew ? 'Draw' : 'You are the Durak!';
-  title.className = won || s.abandoned ? 'win' : 'lose';
-  sub.textContent = s.abandoned
-    ? 'Your opponent lost connection: game over.'
-    : won ? '«' + s.opp_name + '» is the durak this round. 🎉'
-    : drew ? 'Both out of cards: no durak.'
-    : '«' + s.opp_name + '» ran out of cards before you. Rematch?';
+  if (s.n_players > 2) {
+    const durakIdx = s.names ? s.names.findIndex((_, i) => !s.out.includes(i)) : -1;
+    const durakName = durakIdx >= 0 ? s.names[durakIdx] : '?';
+    title.textContent = s.abandoned ? 'Game abandoned' : won ? 'You won!' : 'You are the Durak!';
+    title.className = won || s.abandoned ? 'win' : 'lose';
+    sub.textContent = s.abandoned
+      ? 'A player lost connection: game over.'
+      : won ? `«${durakName}» is the durak. 🎉`
+      : `You are the last one with cards (${s.out.length} player(s) ran out).`;
+  } else {
+    title.textContent = s.abandoned ? 'Opponent disconnected' : won ? 'You won!' : drew ? 'Draw' : 'You are the Durak!';
+    title.className = won || s.abandoned ? 'win' : 'lose';
+    sub.textContent = s.abandoned
+      ? 'Your opponent lost connection: game over.'
+      : won ? '«' + s.opp_name + '» is the durak this round. 🎉'
+      : drew ? 'Both out of cards: no durak.'
+      : '«' + s.opp_name + '» ran out of cards before you. Rematch?';
+  }
 }
 
 /* ============================== interazioni ============================== */
@@ -848,13 +924,13 @@ function eventToasts(s) {
     ? prev.table.reduce((a, p) => a + p.stack.length + (p.defense ? 1 : 0), 0) : 0;
   switch (s.last_action) {
     case 'take':
-      toast((s.defender === s.viewer ? 'You took ' : '«' + s.opp_name + '» took ') + prevN + ' cards');
+      toast((s.defender === s.viewer ? 'You took ' : '«' + nameOf(s, s.defender) + '» took ') + prevN + ' cards');
       break;
     case 'clear': toast('Round cleared'); break;
     case 'transfer':
       toast(s.viewer === s.attacker
-        ? 'Transfer! The attack goes back to «' + s.opp_name + '»'
-        : '«' + s.opp_name + '» transferred the attack: your turn to defend');
+        ? 'Transfer! The attack goes to «' + nameOf(s, s.defender) + '»'
+        : '«' + nameOf(s, s.attacker) + '» transferred the attack: your turn to defend');
       break;
     case 'beat': {
       // difesa nuova (non presente prima): se è una briscola lo si dice
@@ -879,6 +955,7 @@ const TURN_SECONDS = 45;
 let lastRingOwner = null;
 function timerLoop() {
   const s = state.s;
+  if (s && s.n_players > 2) return;   // multi: il chip attivo lo evidenzia renderPlayers
   const C = 131.9;
   const myTurn = s && isMyTurn(s);
   const owner = s ? (myTurn ? 'me' : 'opp') : null;

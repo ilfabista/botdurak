@@ -75,7 +75,8 @@ def choose_move(game: Game, player: int) -> dict:
     if game.phase == "attack":
         card = choose_attack(game, player)
         if card is None:
-            return {"action": "pass"}   # chiude l'attacco (tavolo non vuoto)
+            # niente carte da giocare: si chiude l'attacco se possibile
+            return {"action": "pass"}
         return {"action": "attack", "card": card}
     if game.phase == "throw_in":
         card = choose_throw_in(game, player)

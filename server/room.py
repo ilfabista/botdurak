@@ -34,14 +34,15 @@ class Room:
     """Una partita: gioco + giocatori + connessioni + timer di turno."""
 
     def __init__(self, manager: "RoomManager", match_id: str, demo: bool = False,
-                 seed: Optional[int] = None):
+                 seed: Optional[int] = None, max_players: int = 2):
         self.manager = manager
         self.match_id = match_id
         self.demo = demo
-        # quante connessioni umane servono per partire: 2 in multiplayer,
-        # 1 in demo (il giocatore "IA" è un'entry fittizia senza ws)
-        self.required_conns = 1 if demo else 2
-        self.game = Game(seed=seed)
+        self.max_players = max_players
+        # quante connessioni umane servono per partire: max_players in
+        # multiplayer, 1 in demo (il giocatore "IA" è un'entry fittizia senza ws)
+        self.required_conns = 1 if demo else max_players
+        self.game = Game(seed=seed, n_players=max_players)
         self.players: dict[int, dict] = {}   # idx → {token, name, ws, chat_id}
         self.created_at = time.monotonic()
         self.last_active = time.monotonic()
@@ -54,6 +55,8 @@ class Room:
     # ------------------------------------------------------ giocatori
 
     def add_player(self, token: str, name: str, chat_id: Optional[int] = None) -> int:
+        if len(self.players) >= self.max_players:
+            raise ValueError("room full")
         idx = len(self.players)
         self.players[idx] = {"token": token, "name": sanitize_name(name),
                              "ws": None, "chat_id": chat_id}
@@ -121,16 +124,20 @@ class Room:
                         await self._toast(0, f"IA error: {type(e).__name__}")
                     continue
                 # difensore senza carte in throw_in: l'attacco è impossibile,
-                # l'attaccante passa d'ufficio (con una breve grazia per dare
-                # il tempo di decidere e per evitare la race con un lancio
+                # tutti gli altri passano d'ufficio (con una breve grazia per
+                # dare il tempo di decidere e per evitare la race con un lancio
                 # appena inviato dal client)
                 if (self.game.phase == "throw_in"
                         and not self.game.hands[self.game.defender]):
                     await asyncio.sleep(AUTO_PASS_DELAY)
                     if self.game.phase != "throw_in":
                         continue
-                    self.game.pass_turn(self.game.attacker)
-                    self._after_move()
+                    while (self.game.phase == "throw_in"
+                           and not self.game.hands[self.game.defender]):
+                        if not self.game.can_pass(self.game.thrower):
+                            break
+                        self.game.pass_turn(self.game.thrower)
+                        self._after_move()
                     continue
                 # NB: nessuna mossa automatica allo scadere del tempo — il
                 # giocatore decide con calma (richiesta esplicita dell'utente)
@@ -178,19 +185,19 @@ class Room:
         """Nuova partita nella stessa stanza (solo a partita finita)."""
         if self.game.phase != "over" or self.abandoned:
             return
-        self.game = Game(seed=None)
+        self.game = Game(seed=None, n_players=self.max_players)
         self.deadline = time.time() + TURN_TIME
         self.broadcast_state()
 
     def disconnect(self, idx: int) -> None:
         """Un giocatore chiude la connessione: se la partita è in corso,
-        l'avversario vince per abbandono."""
+        gli altri vincono per abbandono (1v1: l'avversario)."""
         p = self.players.get(idx)
         if p:
             p["ws"] = None
         if self.game.phase != "over" and not self.demo and self.started:
             self.abandoned = True
-            self.game.winner = 1 - idx
+            self.game.winner = 1 - idx if self.game.n_players == 2 else -1
             self.game.phase = "over"
             self.deadline = None
             self.broadcast_state()
@@ -201,10 +208,14 @@ class Room:
         s = self.game.public_state(idx)
         s["my_name"] = self.players.get(idx, {}).get("name", "?")
         s["opp_name"] = self.players.get(1 - idx, {}).get("name", "IA")
+        s["names"] = [self.players.get(i, {}).get("name", f"P{i + 1}")
+                      for i in range(self.max_players)]
         s["demo"] = self.demo
         s["started"] = self.started
         s["abandoned"] = self.abandoned
         s["deadline"] = self.deadline
+        s["registered"] = len(self.players)
+        s["connected"] = sum(1 for p in self.players.values() if p["ws"] is not None)
         return s
 
     def broadcast_state(self) -> None:
@@ -278,6 +289,48 @@ class RoomManager:
         token = secrets.token_urlsafe(16)
         room.add_player(token, name, chat_id=chat_id)
         self.rooms[match_id] = room
+        self.user_room[user_id] = (match_id, token)
+        return match_id, token
+
+    def create_room(self, user_id: int, chat_id: int, name: str,
+                    max_players: int = 2) -> tuple[str, str]:
+        """Stanza NUOVA con un numero di posti scelto (2-6): il creatore
+        riceve il link da condividere; gli altri si uniscono con join_room."""
+        self._ensure_gc()
+        if user_id in self.user_room:
+            match_id, token = self.user_room[user_id]
+            room = self.rooms.get(match_id)
+            if room and room.find_by_token(token) is not None and not room.started:
+                return match_id, token
+            del self.user_room[user_id]
+        match_id = secrets.token_urlsafe(8)
+        room = Room(self, match_id, max_players=max_players)
+        token = secrets.token_urlsafe(16)
+        room.add_player(token, name, chat_id=chat_id)
+        self.rooms[match_id] = room
+        self.user_room[user_id] = (match_id, token)
+        return match_id, token
+
+    def join_room(self, match_id: str, user_id: int, chat_id: int,
+                  name: str) -> Optional[tuple[str, str]]:
+        """Un giocatore si unisce a una stanza esistente dal link di invito.
+        Ritorna (match_id, token) o None se la stanza è piena/partita."""
+        self._ensure_gc()
+        room = self.rooms.get(match_id)
+        if room is None or room.demo or room.started or room.abandoned:
+            return None
+        if len(room.players) >= room.max_players:
+            return None
+        if user_id in self.user_room:
+            match_id2, token2 = self.user_room[user_id]
+            room2 = self.rooms.get(match_id2)
+            if room2 is room and room2.find_by_token(token2) is not None:
+                return match_id2, token2
+        try:
+            token = secrets.token_urlsafe(16)
+            room.add_player(token, name, chat_id=chat_id)
+        except ValueError:
+            return None
         self.user_room[user_id] = (match_id, token)
         return match_id, token
 

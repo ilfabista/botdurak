@@ -88,6 +88,39 @@ async def _durak_private(update: Update, context: ContextTypes.DEFAULT_TYPE,
     await update.message.reply_text(text, reply_markup=kb)
 
 
+def players_keyboard() -> InlineKeyboardMarkup:
+    """Scelta del numero di giocatori (2-6)."""
+    rows = [[InlineKeyboardButton(f"👥 {n}", callback_data=f"durak:{n}")
+             for n in range(2, 7)]]
+    return InlineKeyboardMarkup(rows)
+
+
+async def _durak_multi(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                       webapp_url: str, manager, players: int) -> None:
+    """Stanza multi-giocatore: bottone del creatore + link da condividere."""
+    user = update.effective_user
+    chat = update.effective_chat
+    if user is None or chat is None:
+        return
+    name = user.first_name or "Giocatore"
+    match_id, token = manager.create_room(user.id, chat.id, name, players)
+    kb = game_keyboard(webapp_url, match_id, token, name)
+    invite = f"{webapp_url}/play?m={match_id}&join=1"
+    room = manager.get(match_id)
+    if room is not None and room.started:
+        text = "Partita in corso: riprendi il tavolo."
+    else:
+        text = (
+            f"🃏 Stanza da *{players} giocatori* creata!\n\n"
+            "1️⃣ Apri il tavolo con il pulsante qui sotto\n"
+            "2️⃣ Inoltra il link agli altri giocatori (si uniranno "
+            "automaticamente quando apriranno il link)\n\n"
+            f"📨 *Link da condividere:*\n`{invite}`\n\n"
+            f"Posti occupati: {len(room.players)}/{players}"
+        )
+    await update.message.reply_text(text, reply_markup=kb)
+
+
 def build_bot(token: str, webapp_url: str, manager) -> Application:
     """Costruisce l'Application PTB collegata al RoomManager condiviso."""
     if not webapp_url:
@@ -120,11 +153,43 @@ def build_bot(token: str, webapp_url: str, manager) -> Application:
                 reply_markup=private_chat_keyboard(username),
             )
             return
-        await _durak_private(update, context, webapp_url, manager)
+        user = update.effective_user
+        # stanza già attiva? si riprende il tavolo, senza ricreare
+        if user is not None and user.id in manager.user_room:
+            match_id, token = manager.user_room[user.id]
+            room = manager.get(match_id)
+            if room is not None and room.find_by_token(token) is not None:
+                name = user.first_name or "Giocatore"
+                kb = game_keyboard(webapp_url, match_id, token, name)
+                if room.started:
+                    text = "Partita in corso: riprendi il tavolo."
+                elif len(room.players) < room.max_players:
+                    text = (f"La tua stanza da {room.max_players} giocatori "
+                            "è ancora aperta: condividi il link per far "
+                            "entrare gli altri, poi apri il tavolo.")
+                else:
+                    text = "Stanza piena! Apri il tavolo. 🎉"
+                await update.message.reply_text(text, reply_markup=kb)
+                return
+        await update.message.reply_text(
+            "🎴 *Durak Переводной* — con quanti giocatori vuoi giocare?",
+            reply_markup=players_keyboard(),
+        )
 
     async def durak_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.callback_query.answer()
         await durak(update, context)
+
+    async def durak_multi_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Callback durak:N — crea la stanza multi-giocatore."""
+        query = update.callback_query
+        await query.answer()
+        try:
+            players = int(query.data.split(":")[1])
+        except (IndexError, ValueError):
+            players = 2
+        players = max(2, min(6, players))
+        await _durak_multi(update, context, webapp_url, manager, players)
 
     async def on_added_to_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Bot aggiunto a un gruppo: messaggio di benvenuto col bottone."""
@@ -153,6 +218,7 @@ def build_bot(token: str, webapp_url: str, manager) -> Application:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("durak", durak))
     application.add_handler(CallbackQueryHandler(durak_cb, pattern="^durak$"))
+    application.add_handler(CallbackQueryHandler(durak_multi_cb, pattern=r"^durak:[2-6]$"))
     application.add_handler(ChatMemberHandler(on_added_to_group,
                                               ChatMemberHandler.MY_CHAT_MEMBER))
     return application

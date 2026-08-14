@@ -531,6 +531,53 @@ body {
 .opp-card:first-child { margin-left: 0; }
 .opp-card .card { width: 100%; height: 100%; border-radius: 9px; }
 
+/* ---------------- striscia dei giocatori (multi 3+) ---------------- */
+
+#players-strip {
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  z-index: 9;
+  pointer-events: none;
+}
+.other-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  background: rgba(10, 20, 40, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 5px 10px;
+  min-width: 62px;
+  backdrop-filter: blur(4px);
+}
+.other-chip.active {
+  border-color: rgba(217, 180, 91, 0.85);
+  box-shadow: 0 0 10px rgba(217, 180, 91, 0.35);
+}
+.other-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: #e8e2d2;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.other-count {
+  font-size: 10px;
+  color: rgba(217, 180, 91, 0.9);
+}
+.other-dots {
+  font-size: 8px;
+  letter-spacing: 1px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
 /* ---------------- toasts ---------------- */
 
 #toasts {

@@ -87,7 +87,8 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
 
 async def api_match(request: web.Request) -> web.Response:
     """Crea/unisce una partita (matchmaking): ritorna {m, t, name}.
-    Usato dai test e disponibile per il matchmaking dalla webapp."""
+    Con `players` (2-6) crea una stanza MULTI con quel numero di posti
+    (il creatore condivide il link; gli altri si uniscono con /api/join)."""
     manager: RoomManager = request.app["manager"]
     try:
         data = await request.json()
@@ -95,8 +96,35 @@ async def api_match(request: web.Request) -> web.Response:
         data = {}
     uid = data.get("uid") or secrets.token_urlsafe(12)
     name = str(data.get("name") or "Player")[:18]
-    match_id, token = manager.register_human(str(uid), None, name)
+    try:
+        players = int(data.get("players") or 2)
+    except (TypeError, ValueError):
+        players = 2
+    players = max(2, min(6, players))
+    if players > 2:
+        match_id, token = manager.create_room(str(uid), None, name, players)
+    else:
+        match_id, token = manager.register_human(str(uid), None, name)
     return web.json_response({"m": match_id, "t": token, "name": name})
+
+
+async def api_join(request: web.Request) -> web.Response:
+    """Un giocatore si unisce a una stanza esistente dal link di invito
+    (?m=<match>&join=1): ritorna {m, t} o 404 se la stanza è piena/partita."""
+    manager: RoomManager = request.app["manager"]
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    match_id = str(data.get("m") or "")
+    uid = data.get("uid") or secrets.token_urlsafe(12)
+    name = str(data.get("name") or "Player")[:18]
+    joined = manager.join_room(match_id, str(uid), None, name)
+    if joined is None:
+        return web.json_response({"error": "room not joinable"},
+                                 status=404)
+    m, t = joined
+    return web.json_response({"m": m, "t": t, "name": name})
 
 
 async def make_app() -> web.Application:
@@ -107,6 +135,7 @@ async def make_app() -> web.Application:
     app.router.add_get("/play", lambda r: web.FileResponse(WEBAPP_DIR / "index.html"))
     app.router.add_get("/ws", ws_handler)
     app.router.add_post("/api/match", api_match)
+    app.router.add_post("/api/join", api_join)
     app.router.add_static("/static/", WEBAPP_DIR, show_index=False)
     return app
 

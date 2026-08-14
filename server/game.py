@@ -196,9 +196,12 @@ class Game:
         return [r] if any(rank(c) == r for c in self.hands[player]) else []
 
     def can_take(self, player: int) -> bool:
-        return self.phase == "defend" and player == self.defender and bool(self.table)
+        return (self.phase == "defend" and player == self.defender
+                and player not in self.out and bool(self.table))
 
     def can_pass(self, player: int) -> bool:
+        if player in self.out:
+            return False
         if self.phase == "throw_in":
             # passano a turno i lanciatori (mai il difensore)
             return player == self.thrower
@@ -240,6 +243,8 @@ class Game:
         In throw_in può lanciare SOLO il lanciatore corrente (`thrower`)."""
         if self.phase not in ("attack", "throw_in"):
             raise ValueError("not the moment to attack")
+        if player in self.out:
+            raise ValueError("you are out of the game")
         if self.phase == "throw_in" and player != self.thrower:
             raise ValueError("not your turn to throw")
         if self.phase == "attack" and player != self.attacker:
@@ -288,6 +293,8 @@ class Game:
         non sono battuti tutti."""
         if self.phase != "defend" or player != self.defender:
             raise ValueError("not your turn to defend")
+        if player in self.out:
+            raise ValueError("you are out of the game")
         if card not in self.hands[player]:
             raise ValueError("card not in hand")
         if target is not None:
@@ -352,11 +359,12 @@ class Game:
         self.table.clear()
         self._order_counter = 0
         self.last_action = "take"
-        self.attacker = self._next(player)
-        self.defender = self._next(self.attacker)
         self.thrower = None
         self.pass_count = 0
-        self._resolve_round()
+        self._resolve_round()                    # prima: pescata e uscite
+        if self.phase != "over":
+            self.attacker = self._next(player)   # chi prende non attacca
+            self.defender = self._next(self.attacker)
 
     def pass_turn(self, player: int) -> None:
         """In attack: chiude l'attacco multi-carta (tocca al difensore).
@@ -390,17 +398,23 @@ class Game:
         self.table.clear()
         self._order_counter = 0
         self.last_action = "clear"
-        self.attacker = self.defender           # chi si è difeso attacca
-        self.defender = self._next(self.attacker)
         self.thrower = None
-        self._resolve_round()
+        self.pass_count = 0
+        self._resolve_round()                    # prima: pescata e uscite
+        if self.phase != "over":
+            # chi si è difeso attacca il giro dopo (saltando gli usciti)
+            self.attacker = self.defender if self.defender not in self.out \
+                else self._next(self.defender)
+            self.defender = self._next(self.attacker)
 
     # ------------------------------------------------------------- giro
 
     def _resolve_round(self) -> None:
         """Pescata fino a 6 e controllo vittoria (solo qui si vince).
         Si pesca in ordine di giro: dall'attaccante in senso orario fino
-        al difensore (regola reale del durak)."""
+        al difensore (regola reale del durak). Gli usciti vengono marcati
+        QUI (a mazzo finito); i ruoli del giro successivo li assegnano i
+        chiamanti (take/pass_turn) DOPO questa chiamata."""
         self.first_round = False              # il primo giro è finito
         p = self.attacker
         for _ in range(self.n_players):
@@ -408,22 +422,18 @@ class Game:
                 self.hands[p].append(self.deck.pop(0))
             p = self._next(p)
         self.phase = "attack"
-        if self.winner is None and not self.deck:
-            active = [p for p in range(self.n_players) if self.hands[p]]
+        if not self.deck:
             for p in range(self.n_players):
                 if p not in self.out and not self.hands[p]:
                     self.out.append(p)
+                    self.winner = p
+            active = [p for p in range(self.n_players) if p not in self.out]
             if len(active) == 0:
                 self.winner = -1               # pareggio totale (raro)
                 self.phase = "over"
             elif len(active) == 1:
                 # resta un solo giocatore con carte: è il durak
-                self.winner = self.out[-1] if self.out else -1
                 self.phase = "over"
-            elif self.attacker in self.out:
-                # chi doveva attaccare è uscito: il giro salta gli usciti
-                self.attacker = self._next(self.attacker)
-                self.defender = self._next(self.attacker)
 
     # ------------------------------------------------------------- vista
 

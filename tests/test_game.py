@@ -286,7 +286,7 @@ def test_presa():
 
 
 def test_giro_pulito_scambia_ruoli():
-    g = game_with(["6H", "9H"], ["7H"], [], "S", attacker=0)
+    g = game_with(["6H", "9H"], ["7H"], ["8D", "9D", "TD", "JD", "QD", "KD"], "S", attacker=0)
     g.play_attack(0, "6H")
     g.play_defense(1, "7H")
     g.pass_turn(0)
@@ -343,7 +343,9 @@ def test_non_si_attacca_difensore_senza_carte():
     with pytest.raises(ValueError):
         g.play_attack(0, "6D")              # il difensore non ha carte
     g.pass_turn(0)                          # forzato a passare
-    assert len(g.hands[1]) == HAND_SIZE     # 1 ha pescato fino a 6
+    # la pescata parte dall'attaccante del giro chiuso (0): al difensore
+    # senza carte resta l'ultima carta del mazzo
+    assert g.hands[1] == ["KC"]
     assert "7H" not in g.hands[1]           # la 7H è finita nello scarto
 
 
@@ -418,7 +420,7 @@ def test_tre_giocatori_fine_partita_durak():
     g.pass_turn(0)                              # 0 passa
     g.pass_turn(2)                              # anche 2 passa: giro chiuso, 1 è uscito
     assert 1 in g.out                           # uscito (vincitore parziale)
-    assert g.winner is None                     # la partita continua
+    assert g.winner == 1                        # l'ultimo uscito
     assert g.phase == "attack"
     assert g.attacker == 2 and g.defender == 0  # il giro salta l'uscito 1
     g.play_attack(2, "7C")
